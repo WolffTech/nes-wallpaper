@@ -25,6 +25,11 @@ var pairs: [(rom: String, movie: String?)] = []
 var romsDir: String?
 var moviesDir: String?
 
+// No arguments at all means menu-bar mode: a status item drives the wallpaper
+// from settings persisted in UserDefaults. Any argument keeps the original
+// headless CLI behavior.
+let menuBarMode = CommandLine.arguments.count <= 1
+
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
     let arg = args.removeFirst()
@@ -58,7 +63,7 @@ while !args.isEmpty {
     }
 }
 
-guard !pairs.isEmpty || (romsDir != nil && moviesDir != nil) else { usage() }
+guard menuBarMode || !pairs.isEmpty || (romsDir != nil && moviesDir != nil) else { usage() }
 
 // Library mode: each tile picks a random matched rom/movie pair and starts at
 // a random point in the first 70% of the movie, like the original saver's
@@ -91,8 +96,13 @@ func makeTileSource() -> () -> TileSpec {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var controller: WallpaperController?
+    var menuBar: MenuBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if menuBarMode {
+            menuBar = MenuBarController()
+            return
+        }
         guard let screen = NSScreen.main else {
             FileHandle.standardError.write(Data("nes-wallpaper: no screen\n".utf8))
             exit(1)
@@ -110,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         controller?.shutdown()
+        menuBar?.shutdown()
     }
 }
 
