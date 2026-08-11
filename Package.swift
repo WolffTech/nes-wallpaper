@@ -59,6 +59,11 @@ let package = Package(
             dependencies: ["NESWallpaperCore", "CShm", "CFCEUX"],
             path: "Sources/WallpaperApp"
         ),
+        .testTarget(
+            name: "NESWallpaperCoreTests",
+            dependencies: ["NESWallpaperCore"],
+            path: "Tests/NESWallpaperCoreTests"
+        ),
     ],
     cxxLanguageStandard: .gnucxx17
 )
