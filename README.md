@@ -37,7 +37,7 @@ The FCEUX core keeps global state, so the app runs one `nes-helper` process per 
 open "dist/NES Wallpaper.app"
 ```
 
-The app lives in the menu bar (no Dock icon). Pick your ROM and movie folders in Settings…, and the wallpaper starts automatically on the next launch. It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time.
+The app lives in the menu bar (no Dock icon). Pick your ROM and movie folders in Settings…, and the wallpaper starts automatically on the next launch. It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time. ROMs with no matching movie join the rotation too, playing their title or attract screen with no input (toggleable in Settings).
 
 Browse TASVideos… lists every current NES publication in FM2 format straight from the [tasvideos.org API](https://tasvideos.org/api) and downloads runs into your movies folder. Each row shows whether a matching ROM (by the checksum in the movie's header) is already in your ROM folder; new movies are picked up the next time the wallpaper starts.
 

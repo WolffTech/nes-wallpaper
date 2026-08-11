@@ -192,6 +192,78 @@ final class ContentLibraryTests: XCTestCase {
         XCTAssertEqual(library.matches.first?.romURL, renamed)
     }
 
+    // MARK: - ROMs without movies
+
+    func testTracksROMsWithoutMovies() throws {
+        let matched = try writeROM(named: "matched.nes", seed: 1)
+        let lonely = try writeROM(named: "lonely.nes", seed: 2)
+        _ = try writeFM2(named: "matched-run.fm2",
+                         checksumLine: Self.base64Line(matched.checksum), frames: 5)
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        XCTAssertEqual(library.matches.count, 1)
+        XCTAssertEqual(library.romsWithoutMovies, [lonely.url])
+    }
+
+    func testNonINESFileIsNotAROMWithoutMovie() throws {
+        var fake = Data("XXXX".utf8)
+        fake.append(Data(repeating: 0xAB, count: 1024))
+        try fake.write(to: romsDir.appendingPathComponent("fake.nes"))
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        XCTAssertTrue(library.romsWithoutMovies.isEmpty)
+    }
+
+    func testRandomTileSpecExcludesROMsWhenFlagIsOff() throws {
+        _ = try writeROM(named: "lonely.nes", seed: 3)
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        XCTAssertNil(library.randomTileSpec(includeROMsWithoutMovies: false))
+
+        let spec = try XCTUnwrap(library.randomTileSpec(includeROMsWithoutMovies: true))
+        XCTAssertEqual(spec.rom, romsDir.appendingPathComponent("lonely.nes").path)
+        XCTAssertNil(spec.movie)
+        XCTAssertEqual(spec.startFrame, 0)
+    }
+
+    func testRandomTileSpecWithOnlyMatchesIgnoresFlag() throws {
+        let rom = try writeROM(named: "a.nes", seed: 4)
+        let movie = try writeFM2(named: "a-run.fm2",
+                                 checksumLine: Self.base64Line(rom.checksum), frames: 100)
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        for include in [true, false] {
+            let spec = try XCTUnwrap(library.randomTileSpec(includeROMsWithoutMovies: include))
+            XCTAssertEqual(spec.rom, rom.url.path)
+            XCTAssertEqual(spec.movie, movie.path)
+            XCTAssertTrue((0...70).contains(spec.startFrame)) // first 70% of 100
+        }
+    }
+
+    func testRandomTileSpecEmptyLibraryIsNil() {
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        XCTAssertNil(library.randomTileSpec(includeROMsWithoutMovies: true))
+    }
+
+    func testRandomTileSpecMixesMatchesAndROMs() throws {
+        // With one match and one movie-less ROM, both should show up across
+        // repeated picks (probability of missing one in 100 draws ≈ 2^-100).
+        let matched = try writeROM(named: "matched.nes", seed: 5)
+        _ = try writeROM(named: "lonely.nes", seed: 6)
+        _ = try writeFM2(named: "matched-run.fm2",
+                         checksumLine: Self.base64Line(matched.checksum), frames: 5)
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        var sawMovie = false
+        var sawMovieless = false
+        for _ in 0..<100 {
+            let spec = try XCTUnwrap(library.randomTileSpec(includeROMsWithoutMovies: true))
+            if spec.movie == nil { sawMovieless = true } else { sawMovie = true }
+        }
+        XCTAssertTrue(sawMovie)
+        XCTAssertTrue(sawMovieless)
+    }
+
     // MARK: - Real checked-in fixture
 
     private var testDataDir: URL {

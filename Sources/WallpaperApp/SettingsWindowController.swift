@@ -9,6 +9,7 @@ final class SettingsModel: ObservableObject {
     @Published var columns = 3
     @Published var rows = 2
     @Published var rotationMinutes = 10
+    @Published var includeROMsWithoutMovies = true
 
     var onApply: (() -> Void)?
 
@@ -19,6 +20,7 @@ final class SettingsModel: ObservableObject {
         columns = settings.columns
         rows = settings.rows
         rotationMinutes = settings.rotationMinutes
+        includeROMsWithoutMovies = settings.includeROMsWithoutMovies
     }
 
     func apply() {
@@ -28,6 +30,7 @@ final class SettingsModel: ObservableObject {
         settings.columns = columns
         settings.rows = rows
         settings.rotationMinutes = max(0, rotationMinutes)
+        settings.includeROMsWithoutMovies = includeROMsWithoutMovies
         settings.save()
         onApply?()
     }
@@ -46,8 +49,10 @@ struct SettingsView: View {
                     folderRow(title: "Movies Folder", path: model.moviesDir) {
                         model.moviesDir = $0
                     }
+                    Toggle("Include games without movies",
+                           isOn: $model.includeROMsWithoutMovies)
                 } footer: {
-                    Text("Movies (.fm2) are matched to ROMs (.nes) by the checksum in their header.")
+                    Text("Movies (.fm2) are matched to ROMs (.nes) by the checksum in their header. Games without a matching movie play their title or attract screen.")
                 }
                 Section {
                     Picker("Columns", selection: $model.columns) {
@@ -84,7 +89,7 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(width: 480, height: 400)
+        .frame(width: 480, height: 440)
     }
 
     private func folderRow(title: String, path: String?,

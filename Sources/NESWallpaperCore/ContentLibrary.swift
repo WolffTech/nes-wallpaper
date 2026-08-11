@@ -17,6 +17,10 @@ public final class ContentLibrary {
     public private(set) var matches: [MatchedMovie] = []
     /// Movies with no parseable checksum or no matching ROM.
     public private(set) var unmatched: [URL] = []
+    /// Valid iNES ROMs whose checksum matched no movie; playable without a
+    /// movie (no input: title/attract mode). Files that fail the iNES check
+    /// are excluded entirely, same as for matching.
+    public private(set) var romsWithoutMovies: [URL] = []
 
     public init(romsDir: URL, moviesDir: URL) {
         let romURLs = Self.files(in: romsDir, extension: "nes")
@@ -29,6 +33,7 @@ public final class ContentLibrary {
             if romsByChecksum[checksum] == nil { romsByChecksum[checksum] = romURL }
         }
 
+        var matchedChecksums: Set<Data> = []
         for movieURL in movieURLs {
             guard let header = try? FM2Header.parse(fileURL: movieURL),
                   !header.romChecksum.isEmpty,
@@ -36,6 +41,7 @@ public final class ContentLibrary {
                 unmatched.append(movieURL)
                 continue
             }
+            matchedChecksums.insert(header.romChecksum)
             matches.append(MatchedMovie(
                 romURL: romURL,
                 movieURL: movieURL,
@@ -43,12 +49,36 @@ public final class ContentLibrary {
                 displayName: movieURL.deletingPathExtension().lastPathComponent))
         }
 
+        romsWithoutMovies = romsByChecksum
+            .filter { !matchedChecksums.contains($0.key) }
+            .map(\.value)
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
         Self.log("content-library: \(romURLs.count) roms, \(movieURLs.count) movies, "
-            + "\(matches.count) matched")
+            + "\(matches.count) matched, \(romsWithoutMovies.count) roms without movies")
     }
 
     public func randomMatch() -> MatchedMovie? {
         matches.randomElement()
+    }
+
+    /// Uniform random pick across matched movies and, optionally, ROMs with
+    /// no matching movie. Matched picks start at a random point in the first
+    /// 70% of the movie; movie-less picks start at power-on with no input.
+    public func randomTileSpec(includeROMsWithoutMovies: Bool) -> TileSpec? {
+        let romOnlyCount = includeROMsWithoutMovies ? romsWithoutMovies.count : 0
+        let total = matches.count + romOnlyCount
+        guard total > 0 else { return nil }
+        let index = Int.random(in: 0..<total)
+        guard index < matches.count else {
+            return TileSpec(rom: romsWithoutMovies[index - matches.count].path, movie: nil)
+        }
+        let match = matches[index]
+        let maxStart = Int(Double(match.frameCount) * 0.7)
+        return TileSpec(
+            rom: match.romURL.path,
+            movie: match.movieURL.path,
+            startFrame: maxStart > 0 ? Int.random(in: 0...maxStart) : 0)
     }
 
     /// MD5 of the ROM bytes after the 16-byte iNES header, or nil if the file

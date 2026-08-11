@@ -9,12 +9,14 @@ struct WallpaperSettings {
     static let columnsKey = "GridColumns"
     static let rowsKey = "GridRows"
     static let rotationMinutesKey = "RotationMinutes"
+    static let includeROMsWithoutMoviesKey = "IncludeROMsWithoutMovies"
 
     var romsDir: String?
     var moviesDir: String?
     var columns: Int
     var rows: Int
     var rotationMinutes: Int // 0 = never rotate
+    var includeROMsWithoutMovies: Bool
 
     var rotationInterval: TimeInterval? {
         rotationMinutes > 0 ? TimeInterval(rotationMinutes) * 60 : nil
@@ -27,7 +29,9 @@ struct WallpaperSettings {
             moviesDir: defaults.string(forKey: moviesDirKey),
             columns: (defaults.object(forKey: columnsKey) as? Int ?? 3).clamped(to: 1...8),
             rows: (defaults.object(forKey: rowsKey) as? Int ?? 2).clamped(to: 1...6),
-            rotationMinutes: max(0, defaults.object(forKey: rotationMinutesKey) as? Int ?? 10))
+            rotationMinutes: max(0, defaults.object(forKey: rotationMinutesKey) as? Int ?? 10),
+            includeROMsWithoutMovies: defaults.object(
+                forKey: includeROMsWithoutMoviesKey) as? Bool ?? true)
     }
 
     func save() {
@@ -37,6 +41,7 @@ struct WallpaperSettings {
         defaults.set(columns, forKey: Self.columnsKey)
         defaults.set(rows, forKey: Self.rowsKey)
         defaults.set(rotationMinutes, forKey: Self.rotationMinutesKey)
+        defaults.set(includeROMsWithoutMovies, forKey: Self.includeROMsWithoutMoviesKey)
     }
 }
 
@@ -154,24 +159,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     /// Build a tile source from the configured library: each tile plays a
-    /// random matched rom/movie pair starting at a random point in the first
-    /// 70% of the movie (same policy as the CLI's library mode). Returns nil
-    /// when the folders are unset or yield no matches.
+    /// random pick from the library (same policy as the CLI's library mode).
+    /// Returns nil when the folders are unset or yield nothing playable.
     private static func makeTileSource(settings: WallpaperSettings) -> (() -> TileSpec)? {
         guard let romsDir = settings.romsDir, !romsDir.isEmpty,
               let moviesDir = settings.moviesDir, !moviesDir.isEmpty else { return nil }
         let library = ContentLibrary(
             romsDir: URL(fileURLWithPath: romsDir, isDirectory: true),
             moviesDir: URL(fileURLWithPath: moviesDir, isDirectory: true))
-        guard !library.matches.isEmpty else { return nil }
-        return {
-            let match = library.randomMatch()!
-            let maxStart = Int(Double(match.frameCount) * 0.7)
-            return TileSpec(
-                rom: match.romURL.path,
-                movie: match.movieURL.path,
-                startFrame: maxStart > 0 ? Int.random(in: 0...maxStart) : 0)
+        let includeROMs = settings.includeROMsWithoutMovies
+        guard library.randomTileSpec(includeROMsWithoutMovies: includeROMs) != nil else {
+            return nil
         }
+        // The library is immutable and non-empty, so the pick never fails.
+        return { library.randomTileSpec(includeROMsWithoutMovies: includeROMs)! }
     }
 
     private func startWallpaper(interactive: Bool) {
@@ -185,7 +186,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 alert.informativeText = """
                     Set a ROM folder and a Movies folder in Settings. Movies \
                     (.fm2) are matched to ROMs (.nes) by the checksum in \
-                    their header, so at least one movie must match a ROM.
+                    their header. With "Include games without movies" on, \
+                    ROMs alone are enough; otherwise at least one movie must \
+                    match a ROM.
                     """
                 alert.alertStyle = .warning
                 NSApp.activate(ignoringOtherApps: true)

@@ -65,26 +65,21 @@ while !args.isEmpty {
 
 guard menuBarMode || !pairs.isEmpty || (romsDir != nil && moviesDir != nil) else { usage() }
 
-// Library mode: each tile picks a random matched rom/movie pair and starts at
-// a random point in the first 70% of the movie, like the original saver's
-// checkpoints. Explicit pairs mode keeps the CLI-provided order and startFrame.
+// Library mode: each tile picks a random library entry — a matched rom/movie
+// pair starting at a random point in the first 70% of the movie (like the
+// original saver's checkpoints), or a rom without a movie playing its title/
+// attract screen. Explicit pairs mode keeps the CLI-provided order and
+// startFrame.
 func makeTileSource() -> () -> TileSpec {
     if let romsDir, let moviesDir {
         let library = ContentLibrary(
             romsDir: URL(fileURLWithPath: romsDir, isDirectory: true),
             moviesDir: URL(fileURLWithPath: moviesDir, isDirectory: true))
-        guard !library.matches.isEmpty else {
-            FileHandle.standardError.write(Data("nes-wallpaper: no rom/movie matches in library\n".utf8))
+        guard library.randomTileSpec(includeROMsWithoutMovies: true) != nil else {
+            FileHandle.standardError.write(Data("nes-wallpaper: nothing playable in library\n".utf8))
             exit(1)
         }
-        return {
-            let match = library.randomMatch()!
-            let maxStart = Int(Double(match.frameCount) * 0.7)
-            return TileSpec(
-                rom: match.romURL.path,
-                movie: match.movieURL.path,
-                startFrame: maxStart > 0 ? Int.random(in: 0...maxStart) : 0)
-        }
+        return { library.randomTileSpec(includeROMsWithoutMovies: true)! }
     }
     var pairIndex = 0
     return {
