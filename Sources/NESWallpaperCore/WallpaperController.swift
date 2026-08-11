@@ -37,6 +37,16 @@ public final class WallpaperController {
     private var shmCounter = 0    // fresh shm name for every spawned helper
     private let rotationQueue = DispatchQueue(label: "tile-rotation")
     private var observer: NSObjectProtocol?
+    private var pauseObservers: [NSObjectProtocol] = []
+    private var screenLocked = false
+    private var emulationPaused = false
+    private var occlusionDebounce: DispatchWorkItem?
+
+    /// Set by the UI to suspend emulation; combined with automatic pause
+    /// (screen locked, all wallpaper windows occluded) in updatePauseState.
+    public var userPaused = false {
+        didSet { updatePauseState() }
+    }
 
     /// Adapts a fixed rom/movie list to a cycling tile source, no rotation.
     public convenience init(pairs: [(rom: String, movie: String?)], columns: Int, rows: Int,
@@ -121,6 +131,49 @@ public final class WallpaperController {
             object: nil, queue: .main) { [weak self] _ in
             self?.screensChanged()
         }
+
+        // Emulating all day is wasteful when nobody can see the wallpaper:
+        // pause the helpers while the screen is locked or every wallpaper
+        // window is fully covered (e.g. a fullscreen app).
+        let distributed = DistributedNotificationCenter.default()
+        pauseObservers.append(distributed.addObserver(
+            forName: Notification.Name("com.apple.screenIsLocked"),
+            object: nil, queue: .main) { [weak self] _ in
+            self?.screenLocked = true
+            self?.updatePauseState()
+        })
+        pauseObservers.append(distributed.addObserver(
+            forName: Notification.Name("com.apple.screenIsUnlocked"),
+            object: nil, queue: .main) { [weak self] _ in
+            self?.screenLocked = false
+            self?.updatePauseState()
+        })
+        for window in windows {
+            pauseObservers.append(NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: window, queue: .main) { [weak self] _ in
+                // Occlusion flaps during window ordering; settle before acting.
+                self?.occlusionDebounce?.cancel()
+                let work = DispatchWorkItem { self?.updatePauseState() }
+                self?.occlusionDebounce = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+            })
+        }
+    }
+
+    private func updatePauseState() {
+        let allOccluded = !windows.isEmpty && windows.allSatisfy {
+            !$0.occlusionState.contains(.visible)
+        }
+        let shouldPause = userPaused || screenLocked || allOccluded
+        guard shouldPause != emulationPaused else { return }
+        emulationPaused = shouldPause
+        Self.log(shouldPause
+            ? "pausing emulation (user=\(userPaused) locked=\(screenLocked) occluded=\(allOccluded))"
+            : "resuming emulation")
+        for tile in tiles {
+            shouldPause ? tile.pause() : tile.resume()
+        }
     }
 
     public func shutdown() {
@@ -132,6 +185,11 @@ public final class WallpaperController {
             NotificationCenter.default.removeObserver(observer)
             self.observer = nil
         }
+        for pauseObserver in pauseObservers {
+            NotificationCenter.default.removeObserver(pauseObserver)
+            DistributedNotificationCenter.default().removeObserver(pauseObserver)
+        }
+        pauseObservers.removeAll()
         for tile in tiles { tile.terminate() }
         tiles.removeAll()
         for window in windows { window.orderOut(nil) }
@@ -158,7 +216,8 @@ public final class WallpaperController {
     /// If the replacement never publishes, the old tile keeps running until
     /// the next rotation attempt.
     private func rotateNextTile() {
-        guard !tiles.isEmpty else { return }
+        // Don't churn helpers while nobody can see the wallpaper.
+        guard !tiles.isEmpty, !emulationPaused else { return }
         let index = rotationIndex % tiles.count
         rotationIndex = (index + 1) % tiles.count
 
@@ -192,6 +251,8 @@ public final class WallpaperController {
                 }
                 self.tiles[index].terminate()
                 self.tiles[index] = replacement
+                // Pause may have flipped while the replacement was starting.
+                if self.emulationPaused { replacement.pause() }
             }
         }
     }
