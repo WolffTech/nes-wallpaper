@@ -1,96 +1,78 @@
 import AppKit
-import CFCEUX
+import NESWallpaperCore
 
-// Minimal wallpaper demo: runs one FCEUX instance and renders it tiled onto a
-// borderless window at desktop level (behind icons) on the main screen.
-// Usage: nes-wallpaper <rom> [--movie file.fm2]
+// Tiled NES wallpaper: one nes-helper process per grid cell publishes frames
+// into shared memory; this app renders the grid on a borderless window at
+// desktop level (behind icons).
+// Usage: nes-wallpaper [--grid CxR] <rom[:movie.fm2]>...
 
-var romPath: String?
-var moviePath: String?
+func usage() -> Never {
+    FileHandle.standardError.write(
+        Data("usage: nes-wallpaper [--grid CxR] <rom[:movie.fm2]>...\n".utf8))
+    exit(2)
+}
+
+var columns = 3
+var rows = 2
+var pairs: [(rom: String, movie: String?)] = []
 
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
     let arg = args.removeFirst()
     switch arg {
-    case "--movie": moviePath = args.isEmpty ? nil : args.removeFirst()
-    default: romPath = arg
-    }
-}
-
-guard let romPath else {
-    FileHandle.standardError.write("usage: nes-wallpaper <rom> [--movie file.fm2]\n".data(using: .utf8)!)
-    exit(2)
-}
-
-final class EmulatorView: NSView {
-    private var timer: Timer?
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
-        layer?.magnificationFilter = .nearest
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func start() {
-        // NES NTSC runs at 60.0988 fps; a 60 Hz timer is fine for a demo.
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0988, repeats: true) { [weak self] _ in
-            self?.stepFrame()
+    case "--grid":
+        guard !args.isEmpty else { usage() }
+        let parts = args.removeFirst().lowercased().split(separator: "x")
+        guard parts.count == 2, let c = Int(parts[0]), let r = Int(parts[1]),
+              c > 0, r > 0 else { usage() }
+        columns = c
+        rows = r
+    default:
+        if let colon = arg.firstIndex(of: ":") {
+            pairs.append((rom: String(arg[..<colon]),
+                          movie: String(arg[arg.index(after: colon)...])))
+        } else {
+            pairs.append((rom: arg, movie: nil))
         }
-        RunLoop.main.add(timer!, forMode: .common)
-    }
-
-    private func stepFrame() {
-        guard let rgba = fceux_run_frame(0) else { return }
-        let width = Int(fceux_frame_width())
-        let height = Int(fceux_frame_height())
-        let data = CFDataCreate(nil, rgba, width * height * 4)!
-        let provider = CGDataProvider(data: data)!
-        let image = CGImage(
-            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
-        layer?.contents = image
-        layer?.contentsGravity = .resizeAspect
     }
 }
+
+guard !pairs.isEmpty else { usage() }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var window: NSWindow!
+    var controller: WallpaperController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard let screen = NSScreen.main else { exit(1) }
+        guard let screen = NSScreen.main else {
+            FileHandle.standardError.write(Data("nes-wallpaper: no screen\n".utf8))
+            exit(1)
+        }
+        do {
+            controller = try WallpaperController(
+                pairs: pairs, columns: columns, rows: rows, screens: [screen])
+        } catch {
+            FileHandle.standardError.write(Data("nes-wallpaper: \(error)\n".utf8))
+            exit(1)
+        }
+    }
 
-        window = NSWindow(
-            contentRect: screen.frame,
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false)
-        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.ignoresMouseEvents = true
-        window.isOpaque = true
-        window.backgroundColor = .black
-        window.hasShadow = false
-
-        let view = EmulatorView(frame: screen.frame)
-        window.contentView = view
-        window.orderFront(nil)
-
-        view.start()
+    func applicationWillTerminate(_ notification: Notification) {
+        controller?.shutdown()
     }
 }
 
-let baseDir = NSTemporaryDirectory().appending("fceux-wallpaper")
-try? FileManager.default.createDirectory(atPath: baseDir, withIntermediateDirectories: true)
+// A dying helper must not kill us via EPIPE on its stdin pipe.
+signal(SIGPIPE, SIG_IGN)
 
-guard fceux_init(baseDir) != 0 else { fatalError("fceux_init failed") }
-guard fceux_load_game(romPath) != 0 else { fatalError("failed to load ROM: \(romPath)") }
-if let moviePath {
-    guard fceux_load_movie(moviePath) != 0 else { fatalError("failed to load movie: \(moviePath)") }
+// Route SIGTERM/SIGINT through NSApp.terminate so applicationWillTerminate
+// runs and the helpers are torn down.
+var signalSources: [DispatchSourceSignal] = []
+for sig in [SIGTERM, SIGINT] {
+    signal(sig, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    source.setEventHandler { NSApp.terminate(nil) }
+    source.resume()
+    signalSources.append(source)
 }
 
 let app = NSApplication.shared

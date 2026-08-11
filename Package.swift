@@ -28,16 +28,35 @@ let package = Package(
                 .linkedLibrary("z"),
             ]
         ),
+        // Shared-memory frame transport between helper processes and the app.
+        .target(
+            name: "CShm",
+            path: "Sources/CShm",
+            sources: ["src"],
+            publicHeadersPath: "include"
+        ),
         // CLI harness: run a ROM (+ optional FM2) headless, dump PNG frames.
         .executableTarget(
             name: "nes-headless",
             dependencies: ["CFCEUX"],
             path: "Sources/HeadlessRunner"
         ),
-        // Wallpaper demo: renders the emulator on a desktop-level window.
+        // Helper: one emulator instance, publishes frames to shared memory.
+        .executableTarget(
+            name: "nes-helper",
+            dependencies: ["CFCEUX", "CShm"],
+            path: "Sources/HelperApp"
+        ),
+        // App-side tile management and wallpaper window rendering.
+        .target(
+            name: "NESWallpaperCore",
+            dependencies: ["CShm"],
+            path: "Sources/NESWallpaperCore"
+        ),
+        // Wallpaper app: spawns one helper per tile, renders the grid.
         .executableTarget(
             name: "nes-wallpaper",
-            dependencies: ["CFCEUX"],
+            dependencies: ["NESWallpaperCore", "CShm", "CFCEUX"],
             path: "Sources/WallpaperApp"
         ),
     ],
