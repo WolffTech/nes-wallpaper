@@ -63,7 +63,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         super.init()
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let image = NSImage(systemSymbolName: "gamecontroller.fill",
+        if let image = NSImage(systemSymbolName: "tv.fill",
                                accessibilityDescription: "NES Wallpaper") {
             item.button?.image = image
         } else {
