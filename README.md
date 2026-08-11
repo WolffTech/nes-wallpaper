@@ -30,6 +30,15 @@ swift build
 
 The FCEUX core keeps global state, so the app runs one `nes-helper` process per tile; each publishes 256×240 RGBA frames into a double-buffered POSIX shared-memory segment that the app composites at 60 Hz.
 
+## Installing as an app
+
+```sh
+./Scripts/make-app.sh   # builds release and assembles dist/"NES Wallpaper.app"
+open "dist/NES Wallpaper.app"
+```
+
+The app lives in the menu bar (no Dock icon). Pick your ROM and movie folders in Settings…, and the wallpaper starts automatically on the next launch. It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time.
+
 ## Trying it
 
 ```sh
