@@ -1,6 +1,18 @@
-.build/
+# macOS
 .DS_Store
-vendor/fceux-upstream/
-frames/
+
+# Swift Package Manager
+/.build/
+/.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Xcode
 *.xcodeproj
-dist/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# Generated output and local scratch space
+/dist/
+/frames/
+/temp/
+/vendor/fceux-upstream/
