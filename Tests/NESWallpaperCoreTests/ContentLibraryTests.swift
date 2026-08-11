@@ -1,4 +1,3 @@
-import CryptoKit
 import XCTest
 @testable import NESWallpaperCore
 
@@ -28,21 +27,14 @@ final class ContentLibraryTests: XCTestCase {
         try FileManager.default.removeItem(at: tempDir)
     }
 
-    // MARK: - Fixtures
+    // MARK: - Fixtures (shared builders live in Fixtures.swift)
 
-    /// Minimal fake ROM: 16-byte iNES header ("NES\x1a" magic) plus a few KB
-    /// of deterministic payload derived from `seed`.
     private func makeROMData(seed: UInt8, payloadSize: Int = 4096) -> Data {
-        var data = Data([0x4E, 0x45, 0x53, 0x1A]) // "NES\x1a"
-        data.append(Data(repeating: 0, count: 12))
-        data.append(Data((0..<payloadSize).map { UInt8(truncatingIfNeeded: $0) &+ seed }))
-        return data
+        Fixtures.makeROMData(seed: seed, payloadSize: payloadSize)
     }
 
-    /// MD5 of the bytes after the 16-byte iNES header — what FCEUX embeds
-    /// as `romChecksum` in FM2 files.
     private func checksum(of romData: Data) -> Data {
-        Data(Insecure.MD5.hash(data: romData.dropFirst(16)))
+        Fixtures.checksum(of: romData)
     }
 
     private func writeROM(named name: String, seed: UInt8) throws -> (url: URL, checksum: Data) {
@@ -54,27 +46,15 @@ final class ContentLibraryTests: XCTestCase {
 
     private func writeFM2(named name: String, checksumLine: String?, frames: Int,
                           romFilename: String = "fixture") throws -> URL {
-        var text = """
-        version 3
-        emuVersion 20606
-        palFlag 0
-        romFilename \(romFilename)
-
-        """
-        if let checksumLine {
-            text += "romChecksum \(checksumLine)\n"
-        }
-        text += "port0 1\nport1 1\nNewPPU 0\n"
-        for _ in 0..<frames {
-            text += "|0|........|........||\n"
-        }
+        let text = Fixtures.fm2Text(checksumLine: checksumLine, frames: frames,
+                                    romFilename: romFilename)
         let url = moviesDir.appendingPathComponent(name)
         try text.write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 
     private static func base64Line(_ checksum: Data) -> String {
-        "base64:\(checksum.base64EncodedString())"
+        Fixtures.base64Line(checksum)
     }
 
     // MARK: - FM2Header

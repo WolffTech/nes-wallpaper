@@ -65,7 +65,7 @@ public final class ContentLibrary {
     /// Non-recursive listing of regular files with the given extension
     /// (case-insensitive), sorted by name. An unreadable directory is
     /// treated as empty.
-    private static func files(in directory: URL, extension ext: String) -> [URL] {
+    static func files(in directory: URL, extension ext: String) -> [URL] {
         let contents: [URL]
         do {
             contents = try FileManager.default.contentsOfDirectory(
