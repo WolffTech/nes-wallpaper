@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import NESWallpaperCore
 
 /// Backing model for the settings form. Edits stay local until `apply()`
 /// commits them to UserDefaults and notifies the menu-bar controller.
@@ -10,6 +11,7 @@ final class SettingsModel: ObservableObject {
     @Published var rows = 2
     @Published var rotationMinutes = 10
     @Published var includeROMsWithoutMovies = true
+    @Published var videoFilter = VideoFilter.none
 
     var onApply: (() -> Void)?
 
@@ -21,6 +23,7 @@ final class SettingsModel: ObservableObject {
         rows = settings.rows
         rotationMinutes = settings.rotationMinutes
         includeROMsWithoutMovies = settings.includeROMsWithoutMovies
+        videoFilter = settings.videoFilter
     }
 
     func apply() {
@@ -31,6 +34,7 @@ final class SettingsModel: ObservableObject {
         settings.rows = rows
         settings.rotationMinutes = max(0, rotationMinutes)
         settings.includeROMsWithoutMovies = includeROMsWithoutMovies
+        settings.videoFilter = videoFilter
         settings.save()
         onApply?()
     }
@@ -63,6 +67,15 @@ struct SettingsView: View {
                     }
                 }
                 Section {
+                    Picker("Video Filter", selection: $model.videoFilter) {
+                        ForEach(VideoFilter.allCases, id: \.self) {
+                            Text($0.displayName).tag($0)
+                        }
+                    }
+                } footer: {
+                    Text("CRT and smoothing filters, rendered per tile by the emulator.")
+                }
+                Section {
                     LabeledContent("Rotate Every") {
                         TextField("Minutes", value: $model.rotationMinutes, format: .number)
                             .multilineTextAlignment(.trailing)
@@ -89,7 +102,7 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(width: 480, height: 440)
+        .frame(width: 480, height: 520)
     }
 
     private func folderRow(title: String, path: String?,

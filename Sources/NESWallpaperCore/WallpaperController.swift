@@ -22,16 +22,36 @@ public struct TileSpec {
 /// Renders a columns x rows grid of NES tiles on a borderless window at
 /// desktop level (behind icons) on each requested screen. Each tile is a
 /// nes-helper child process read via shared memory.
+/// Routes one window's CADisplayLink callback to the controller.
+/// (CADisplayLink needs an @objc target, so this small NSObject stands in
+/// for the plain-Swift controller and also remembers which window fired.)
+private final class DisplayLinkDriver: NSObject {
+    weak var controller: WallpaperController?
+    let windowIndex: Int
+
+    init(controller: WallpaperController, windowIndex: Int) {
+        self.controller = controller
+        self.windowIndex = windowIndex
+    }
+
+    @objc func step(_ link: CADisplayLink) {
+        controller?.renderWindow(windowIndex)
+    }
+}
+
 public final class WallpaperController {
     private let columns: Int
     private let rows: Int
+    private let filter: VideoFilter
     private let helper: URL
     private let tileSource: () -> TileSpec
     private var windows: [NSWindow] = []
     private var screenNumbers: [NSNumber?] = [] // per window, for relayout
-    private var tiles: [TileProcess] = []       // parallel to layers
-    private var layers: [CALayer] = []
-    private var timer: Timer?
+    private var tiles: [TileProcess] = []       // parallel to renderers' slots
+    private let context: MetalContext
+    private var renderers: [TileGridRenderer] = [] // one per window
+    private var displayLinks: [CADisplayLink] = []
+    private var linkDrivers: [DisplayLinkDriver] = []
     private var rotationTimer: Timer?
     private var rotationIndex = 0 // next tile to rotate, round-robin
     private var shmCounter = 0    // fresh shm name for every spawned helper
@@ -50,7 +70,7 @@ public final class WallpaperController {
 
     /// Adapts a fixed rom/movie list to a cycling tile source, no rotation.
     public convenience init(pairs: [(rom: String, movie: String?)], columns: Int, rows: Int,
-                            screens: [NSScreen]) throws {
+                            screens: [NSScreen], filter: VideoFilter = .none) throws {
         guard !pairs.isEmpty else {
             throw WallpaperError("need at least one rom, one screen, and a positive grid")
         }
@@ -61,7 +81,8 @@ public final class WallpaperController {
                 let pair = pairs[index % pairs.count]
                 return TileSpec(rom: pair.rom, movie: pair.movie, startFrame: 0)
             },
-            rotationInterval: nil, columns: columns, rows: rows, screens: screens)
+            rotationInterval: nil, columns: columns, rows: rows, screens: screens,
+            filter: filter)
     }
 
     /// tileSource is called once per tile at startup and once per rotation.
@@ -69,52 +90,66 @@ public final class WallpaperController {
     /// rotationInterval / tileCount seconds, round-robin, so tiles change on
     /// a stagger rather than all at once.
     public init(tileSource: @escaping () -> TileSpec, rotationInterval: TimeInterval?,
-                columns: Int, rows: Int, screens: [NSScreen]) throws {
+                columns: Int, rows: Int, screens: [NSScreen],
+                filter: VideoFilter = .none) throws {
         guard columns > 0, rows > 0, !screens.isEmpty else {
             throw WallpaperError("need at least one rom, one screen, and a positive grid")
         }
         self.columns = columns
         self.rows = rows
+        self.filter = filter
         self.tileSource = tileSource
 
         helper = try Self.findHelper()
+        context = try MetalContext()
 
         // Spawn every helper first, then open their segments: startup
         // (ROM load, shm create) overlaps across processes.
+        let (tileWidth, tileHeight) = filter.outputSize
         for screen in screens {
             let window = Self.makeDesktopWindow(frame: screen.frame)
-            let content = NSView(frame: screen.frame)
-            content.wantsLayer = true
-            content.layer?.backgroundColor = NSColor.black.cgColor
+            let content = WallpaperMetalView(
+                frame: NSRect(origin: .zero, size: screen.frame.size),
+                device: context.device)
             window.contentView = content
 
             for _ in 0..<(columns * rows) {
                 tiles.append(try spawnTile(tileSource()))
-
-                let layer = CALayer()
-                layer.contentsGravity = .resizeAspect // letterbox 256x240 in the cell
-                layer.magnificationFilter = .nearest
-                content.layer?.addSublayer(layer)
-                layers.append(layer)
             }
+            renderers.append(try TileGridRenderer(
+                context: context, view: content, columns: columns, rows: rows,
+                tileWidth: tileWidth, tileHeight: tileHeight))
 
             windows.append(window)
             screenNumbers.append(
                 screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
             window.orderFront(nil)
         }
-        layoutLayers()
 
-        for tile in tiles where !tile.openSharedMemory() {
-            Self.log("helper for \(tile.shmName) never published; tile stays black")
-            tile.terminate()
+        for tile in tiles {
+            guard tile.openSharedMemory() else {
+                Self.log("helper for \(tile.shmName) never published; tile stays black")
+                tile.terminate()
+                continue
+            }
+            if let size = tile.frameSize, size != filter.outputSize {
+                Self.log("helper for \(tile.shmName) publishes \(size) but filter "
+                    + "\(filter.rawValue) expects \(filter.outputSize); tile stays black")
+                tile.terminate()
+            }
         }
 
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.tick()
+        // One display link per window: each runs at its display's native
+        // cadence. Uploads are gated on frame_count, so a 120 Hz ProMotion
+        // display costs extra draws but no extra texture uploads.
+        for (windowIndex, window) in windows.enumerated() {
+            guard let content = window.contentView else { continue }
+            let driver = DisplayLinkDriver(controller: self, windowIndex: windowIndex)
+            let link = content.displayLink(target: driver, selector: #selector(DisplayLinkDriver.step(_:)))
+            link.add(to: .main, forMode: .common)
+            linkDrivers.append(driver)
+            displayLinks.append(link)
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
 
         if let rotationInterval, rotationInterval > 0, !tiles.isEmpty {
             let rotationTimer = Timer(
@@ -174,11 +209,14 @@ public final class WallpaperController {
         for tile in tiles {
             shouldPause ? tile.pause() : tile.resume()
         }
+        // Emulators stop via stdin; the links stop the app's GPU work too.
+        for link in displayLinks { link.isPaused = shouldPause }
     }
 
     public func shutdown() {
-        timer?.invalidate()
-        timer = nil
+        for link in displayLinks { link.invalidate() }
+        displayLinks.removeAll()
+        linkDrivers.removeAll()
         rotationTimer?.invalidate()
         rotationTimer = nil
         if let observer {
@@ -205,7 +243,7 @@ public final class WallpaperController {
         shmCounter += 1
         return try TileProcess(
             helper: helper, shmName: shmName, rom: spec.rom, movie: spec.movie,
-            startFrame: spec.startFrame)
+            startFrame: spec.startFrame, filter: filter)
     }
 
     /// Replace one tile, round-robin, without blocking the main thread:
@@ -249,8 +287,19 @@ public final class WallpaperController {
                     replacement.terminate()
                     return
                 }
+                if let size = replacement.frameSize, size != self.filter.outputSize {
+                    Self.log("replacement helper for \(replacement.shmName) publishes \(size), expected \(self.filter.outputSize); keeping old tile")
+                    replacement.terminate()
+                    return
+                }
                 self.tiles[index].terminate()
                 self.tiles[index] = replacement
+                // The replacement restarts frame_count; force a re-upload so
+                // a coincidental match can't leave the old game on screen.
+                let tilesPerWindow = self.columns * self.rows
+                if index / tilesPerWindow < self.renderers.count {
+                    self.renderers[index / tilesPerWindow].invalidateTile(index % tilesPerWindow)
+                }
                 // Pause may have flipped while the replacement was starting.
                 if self.emulationPaused { replacement.pause() }
             }
@@ -261,37 +310,11 @@ public final class WallpaperController {
         FileHandle.standardError.write(Data("nes-wallpaper: \(msg)\n".utf8))
     }
 
-    private func tick() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for (tile, layer) in zip(tiles, layers) {
-            if layer.contents == nil || tile.frameCount != tile.lastFrameCount {
-                if let image = tile.makeImage() { layer.contents = image }
-            }
-        }
-        CATransaction.commit()
-    }
-
-    private func layoutLayers() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for (windowIndex, window) in windows.enumerated() {
-            guard let bounds = window.contentView?.bounds else { continue }
-            let cellWidth = bounds.width / CGFloat(columns)
-            let cellHeight = bounds.height / CGFloat(rows)
-            let base = windowIndex * columns * rows
-            for row in 0..<rows {
-                for col in 0..<columns {
-                    let index = base + row * columns + col
-                    guard index < layers.count else { continue }
-                    layers[index].frame = CGRect(
-                        x: CGFloat(col) * cellWidth,
-                        y: bounds.height - CGFloat(row + 1) * cellHeight,
-                        width: cellWidth, height: cellHeight)
-                }
-            }
-        }
-        CATransaction.commit()
+    /// Display-link callback for one window: upload changed tiles, draw.
+    fileprivate func renderWindow(_ windowIndex: Int) {
+        guard windowIndex < renderers.count else { return }
+        let base = windowIndex * columns * rows
+        renderers[windowIndex].draw(tiles: tiles, range: base..<(base + columns * rows))
     }
 
     private func screensChanged() {
@@ -303,8 +326,9 @@ public final class WallpaperController {
             guard let screen = match ?? NSScreen.main else { continue }
             window.setFrame(screen.frame, display: true)
             window.contentView?.frame = NSRect(origin: .zero, size: screen.frame.size)
+            // The view's layout pass resizes the drawable; tile geometry is
+            // recomputed from drawableSize on every draw.
         }
-        layoutLayers()
     }
 
     private static func makeDesktopWindow(frame: NSRect) -> NSWindow {

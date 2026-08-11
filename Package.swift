@@ -16,6 +16,13 @@ let package = Package(
                 "fceux/pputile.inc",
             ],
             publicHeadersPath: "include",
+            cSettings: [
+                // nes_ntsc.c is the one C file in the core; the cxxSettings
+                // -Wno-everything below doesn't reach it.
+                .unsafeFlags([
+                    "-Wno-everything",
+                ]),
+            ],
             cxxSettings: [
                 .headerSearchPath("fceux"),
                 .define("HAVE_ASPRINTF"),

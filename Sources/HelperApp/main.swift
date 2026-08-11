@@ -3,7 +3,7 @@ import CFCEUX
 import CShm
 
 // Usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>]
-//        [--start-frame N] [--loop]
+//        [--start-frame N] [--loop] [--filter <name>]
 //
 // Runs one FCEUX instance and publishes frames into a shared-memory segment
 // at NES NTSC rate. Quits on SIGTERM/SIGINT, stdin "quit"/EOF, or orphaning.
@@ -14,11 +14,27 @@ func log(_ msg: String) {
     FileHandle.standardError.write("nes-helper[\(getpid())]: \(msg)\n".data(using: .utf8)!)
 }
 
+// Filter name -> (specfilt, specfilteropt) for fceux_set_video_filter.
+// Deliberately duplicated from NESWallpaperCore's VideoFilter (the helper
+// must not link AppKit); keep the two in sync.
+let filterMap: [String: (Int32, Int32)] = [
+    "none": (0, 0),
+    "hq2x": (1, 0),
+    "scale2x": (2, 0),
+    "ntsc-composite": (3, 0),
+    "ntsc-svideo": (3, 1),
+    "ntsc-rgb": (3, 2),
+    "ntsc-mono": (3, 3),
+    "hq3x": (4, 0),
+    "scale3x": (5, 0),
+]
+
 var shmName: String?
 var romPath: String?
 var moviePath: String?
 var startFrame = 0
 var loopMovie = false
+var filterName = "none"
 var badArgs = false
 
 var args = Array(CommandLine.arguments.dropFirst())
@@ -32,12 +48,13 @@ while !args.isEmpty {
         guard let n = Int(args.removeFirst()), n >= 0 else { badArgs = true; break }
         startFrame = n
     case "--loop": loopMovie = true
+    case "--filter" where !args.isEmpty: filterName = args.removeFirst()
     default: badArgs = true
     }
 }
 
-guard !badArgs, let shmName, let romPath else {
-    FileHandle.standardError.write("usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>] [--start-frame N] [--loop]\n".data(using: .utf8)!)
+guard !badArgs, let shmName, let romPath, let filter = filterMap[filterName] else {
+    FileHandle.standardError.write("usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>] [--start-frame N] [--loop] [--filter \(filterMap.keys.sorted().joined(separator: "|"))]\n".data(using: .utf8)!)
     exit(2)
 }
 
@@ -62,9 +79,18 @@ guard fceux_load_game(romPath) != 0 else { log("failed to load ROM: \(romPath)")
 if let moviePath {
     guard fceux_load_movie(moviePath) != 0 else { log("failed to load movie: \(moviePath)"); exit(1) }
 }
+// After load_game: the NTSC blit path requires a loaded game.
+guard fceux_set_video_filter(filter.0, filter.1) != 0 else {
+    log("failed to set video filter \(filterName)"); exit(1)
+}
+let frameWidth = Int(fceux_frame_width())
+let frameHeight = Int(fceux_frame_height())
+let pixBytes = frameWidth * frameHeight * 4
 
-guard let shm = nes_shm_create(shmName) else { log("failed to create shm \(shmName)"); exit(1) }
-log("started: shm=\(shmName) rom=\(romPath) movie=\(moviePath ?? "none")\(loopMovie ? " loop" : "")")
+guard let shm = nes_shm_create(shmName, UInt32(frameWidth), UInt32(frameHeight)) else {
+    log("failed to create shm \(shmName)"); exit(1)
+}
+log("started: shm=\(shmName) rom=\(romPath) movie=\(moviePath ?? "none")\(loopMovie ? " loop" : "") filter=\(filterName) \(frameWidth)x\(frameHeight)")
 
 signal(SIGTERM, SIG_IGN)
 signal(SIGINT, SIG_IGN)
@@ -88,12 +114,6 @@ Thread.detachNewThread {
     log("stdin EOF")
     setQuit()
 }
-
-// Swift cannot import the `pixels` field (its array size comes from a macro),
-// so locate it from the end of the struct: it is the last field, and the
-// header words leave no tail padding.
-let pixBytes = Int(NES_SHM_WIDTH * NES_SHM_HEIGHT * 4)
-let pixelsBase = UnsafeMutableRawPointer(shm) + (MemoryLayout<nes_shm_t>.size - 2 * pixBytes)
 
 // Fast-forward to the requested movie frame: unpaced, render skipped, nothing
 // published (the reader tolerates a black tile while frame_count is 0). Stops
@@ -141,9 +161,9 @@ emulation: while true {
     if flags.quit { break emulation }
     if flags.paused { continue }
 
-    guard let rgba = fceux_run_frame(0) else { continue }
+    guard let bgrx = fceux_run_frame(0) else { continue }
     let back = 1 - nes_shm_load(&shm.pointee.front)
-    memcpy(pixelsBase + Int(back) * pixBytes, rgba, pixBytes)
+    memcpy(nes_shm_pixels(shm, back), bgrx, pixBytes)
     nes_shm_store(&shm.pointee.front, back)
     frameCount &+= 1
     nes_shm_store(&shm.pointee.frame_count, frameCount)

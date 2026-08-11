@@ -5,13 +5,16 @@ import NESWallpaperCore
 // into shared memory; this app renders the grid on a borderless window at
 // desktop level (behind icons).
 // Usage: nes-wallpaper [--grid CxR] [--rotate SECONDS] [--start-frame N]
-//        <rom[:movie.fm2]>...
-//        nes-wallpaper [--grid CxR] [--rotate SECONDS] --roms DIR --movies DIR
+//        [--filter NAME] <rom[:movie.fm2]>...
+//        nes-wallpaper [--grid CxR] [--rotate SECONDS] [--filter NAME]
+//        --roms DIR --movies DIR
 
 func usage() -> Never {
+    let filters = VideoFilter.allCases.map(\.rawValue).joined(separator: "|")
     FileHandle.standardError.write(Data("""
-    usage: nes-wallpaper [--grid CxR] [--rotate SECONDS] [--start-frame N] <rom[:movie.fm2]>...
-           nes-wallpaper [--grid CxR] [--rotate SECONDS] --roms DIR --movies DIR
+    usage: nes-wallpaper [--grid CxR] [--rotate SECONDS] [--start-frame N] [--filter NAME] <rom[:movie.fm2]>...
+           nes-wallpaper [--grid CxR] [--rotate SECONDS] [--filter NAME] --roms DIR --movies DIR
+    filters: \(filters)
 
     """.utf8))
     exit(2)
@@ -21,6 +24,7 @@ var columns = 3
 var rows = 2
 var rotationInterval: TimeInterval?
 var startFrame = 0
+var videoFilter = VideoFilter.none
 var pairs: [(rom: String, movie: String?)] = []
 var romsDir: String?
 var moviesDir: String?
@@ -53,6 +57,9 @@ while !args.isEmpty {
     case "--movies":
         guard !args.isEmpty else { usage() }
         moviesDir = args.removeFirst()
+    case "--filter":
+        guard !args.isEmpty, let f = VideoFilter(rawValue: args.removeFirst()) else { usage() }
+        videoFilter = f
     default:
         if let colon = arg.firstIndex(of: ":") {
             pairs.append((rom: String(arg[..<colon]),
@@ -106,7 +113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller = try WallpaperController(
                 tileSource: makeTileSource(),
                 rotationInterval: rotationInterval,
-                columns: columns, rows: rows, screens: [screen])
+                columns: columns, rows: rows, screens: [screen],
+                filter: videoFilter)
         } catch {
             FileHandle.standardError.write(Data("nes-wallpaper: \(error)\n".utf8))
             exit(1)

@@ -18,6 +18,7 @@
 #include "state.h"
 #include "emufile.h"
 #include "video.h"
+#include "drivers/common/vidblit.h"
 
 #include "fceux_c.h"
 
@@ -31,9 +32,16 @@ int KillFCEUXonFrame = 0;
 bool turbo = false;
 
 static fceux_log_fn s_log_fn = nullptr;
-static uint8 s_palette[256][3];
+// 4-byte stride: the layout SetPaletteBlitToHigh expects (reads src[i<<2 .. +2]).
+static uint8 s_palette4[256][4];
+static int s_paletterefresh = 0;
 static uint32 s_joypad_data = 0; // 4 pads, one byte each
-static std::vector<unsigned char> s_rgba(256 * 240 * 4);
+
+// vidblit output state, set by fceux_set_video_filter.
+static std::vector<unsigned char> s_out;
+static int s_out_w = 0, s_out_h = 0;
+static int s_xscale = 1, s_yscale = 1;
+static bool s_blit_inited = false;
 
 static void shim_log(const char *msg, int is_error) {
 	if (s_log_fn)
@@ -60,6 +68,38 @@ int fceux_init(const char *base_dir) {
 	FCEUI_SetInput(1, SI_GAMEPAD, &s_joypad_data, 0);
 	FCEUI_SetInputFC(SIFC_NONE, nullptr, 0);
 	FCEUI_SetInputFourscore(false);
+	// vidblit is the only output path, even unfiltered: it applies the
+	// deemphasis map (XDBuf) the old hand-rolled palette loop dropped.
+	return fceux_set_video_filter(0, 0);
+}
+
+int fceux_set_video_filter(int specfilt, int specfilteropt) {
+	int w, h, xscale, yscale;
+	switch (specfilt) {
+	case 0: w = 256; h = 240; xscale = 1; yscale = 1; break; // none
+	case 1: case 2: w = 512; h = 480; xscale = 2; yscale = 2; break; // hq2x, scale2x
+	case 3: w = 602; h = 480; xscale = 2; yscale = 2; break; // NTSC (2 * 301)
+	case 4: case 5: w = 768; h = 720; xscale = 3; yscale = 3; break; // hq3x, scale3x
+	default: return 0;
+	}
+	if (specfilt == 3 && (specfilteropt < 0 || specfilteropt > 3))
+		return 0;
+	if (s_blit_inited)
+		KillBlitToHigh();
+	s_blit_inited = false;
+	// b=4 only: nes_ntsc_out_t is hardcoded to 32-bit. These masks make
+	// every path emit 0x00RRGGBB words = B,G,R,X bytes in memory (BGRX).
+	// Init BEFORE the palette: hq2x/hq3x rewrite masks/Bpp internally.
+	if (!InitBlitToHigh(4, 0x00FF0000u, 0x0000FF00u, 0x000000FFu, 0,
+	                    specfilt, specfilteropt))
+		return 0;
+	s_blit_inited = true;
+	s_out.assign((size_t)w * h * 4, 0);
+	s_out_w = w;
+	s_out_h = h;
+	s_xscale = xscale;
+	s_yscale = yscale;
+	s_paletterefresh = 1;
 	return 1;
 }
 
@@ -90,25 +130,20 @@ const unsigned char *fceux_run_frame(int skip_render) {
 	int32 *sound = nullptr;
 	int32 ssize = 0;
 	FCEUI_Emulate(&gfx, &sound, &ssize, skip_render ? 1 : 0);
-	if (skip_render || !gfx)
+	if (skip_render || !gfx || !s_blit_inited)
 		return nullptr;
-	// XBuf is 8-bit palette-indexed, stride 256.
-	unsigned char *out = s_rgba.data();
-	for (int y = 0; y < 240; y++) {
-		const uint8 *row = gfx + y * 256;
-		for (int x = 0; x < 256; x++) {
-			const uint8 idx = row[x];
-			*out++ = s_palette[idx][0];
-			*out++ = s_palette[idx][1];
-			*out++ = s_palette[idx][2];
-			*out++ = 0xFF;
-		}
+	if (s_paletterefresh) {
+		SetPaletteBlitToHigh(&s_palette4[0][0]);
+		s_paletterefresh = 0;
 	}
-	return s_rgba.data();
+	// gfx is XBuf itself. Blit8ToHigh needs the real XBuf pointer: it
+	// locates the parallel deemphasis plane (XDBuf) via src - XBuf.
+	Blit8ToHigh(gfx, s_out.data(), 256, 240, s_out_w * 4, s_xscale, s_yscale);
+	return s_out.data();
 }
 
-int fceux_frame_width(void) { return 256; }
-int fceux_frame_height(void) { return 240; }
+int fceux_frame_width(void) { return s_out_w; }
+int fceux_frame_height(void) { return s_out_h; }
 
 long fceux_state_save(unsigned char *buf, long capacity) {
 	std::vector<u8> vec;
@@ -154,15 +189,18 @@ ArchiveScanRecord FCEUD_ScanArchive(std::string) { return ArchiveScanRecord(); }
 const char *FCEUD_GetCompilerString() { return "clang (embedded)"; }
 
 void FCEUD_SetPalette(uint8 index, uint8 r, uint8 g, uint8 b) {
-	s_palette[index][0] = r;
-	s_palette[index][1] = g;
-	s_palette[index][2] = b;
+	s_palette4[index][0] = r;
+	s_palette4[index][1] = g;
+	s_palette4[index][2] = b;
+	// Deferred into fceux_run_frame: palette callbacks fire during
+	// FCEUI_LoadGame, possibly before InitBlitToHigh has run.
+	s_paletterefresh = 1;
 }
 
 void FCEUD_GetPalette(uint8 index, uint8 *r, uint8 *g, uint8 *b) {
-	*r = s_palette[index][0];
-	*g = s_palette[index][1];
-	*b = s_palette[index][2];
+	*r = s_palette4[index][0];
+	*g = s_palette4[index][1];
+	*b = s_palette4[index][2];
 }
 
 void FCEUD_PrintError(const char *s) { shim_log(s, 1); }

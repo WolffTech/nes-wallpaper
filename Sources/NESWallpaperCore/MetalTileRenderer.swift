@@ -1,0 +1,231 @@
+import AppKit
+import Metal
+import QuartzCore
+
+// Metal compositing for the wallpaper grid: one CAMetalLayer per desktop
+// window, one texture per tile uploaded straight from the helper's shared
+// memory, drawn as aspect-fit quads in a single render pass per frame.
+
+/// The shader is embedded as a string and compiled at startup: SwiftPM
+/// resource bundles would complicate Scripts/make-app.sh (which ships bare
+/// binaries), and the source is ~30 lines.
+private let shaderSource = """
+#include <metal_stdlib>
+using namespace metal;
+
+struct VOut { float4 pos [[position]]; float2 uv; };
+
+vertex VOut tileVertex(uint vid [[vertex_id]],
+                       constant float4 &rect [[buffer(0)]]) { // NDC x,y,w,h
+    float2 unit = float2(vid & 1, vid >> 1); // strip: (0,0)(1,0)(0,1)(1,1)
+    VOut o;
+    o.pos = float4(rect.x + unit.x * rect.z, rect.y + unit.y * rect.w, 0, 1);
+    o.uv  = float2(unit.x, 1.0 - unit.y);    // flip: shm rows are top-down
+    return o;
+}
+
+fragment float4 tileFragment(VOut in [[stage_in]],
+                             texture2d<float> tex [[texture(0)]],
+                             sampler s [[sampler(0)]]) {
+    // Force opaque: the NTSC filter writes 0 into the X byte.
+    return float4(tex.sample(s, in.uv).rgb, 1.0);
+}
+"""
+
+/// Device, queue, pipeline, and sampler shared by every window's renderer.
+final class MetalContext {
+    let device: MTLDevice
+    let queue: MTLCommandQueue
+    let pipeline: MTLRenderPipelineState
+    let sampler: MTLSamplerState
+
+    init() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw WallpaperError("no Metal device available")
+        }
+        guard let queue = device.makeCommandQueue() else {
+            throw WallpaperError("failed to create Metal command queue")
+        }
+        self.device = device
+        self.queue = queue
+
+        let library: MTLLibrary
+        do {
+            library = try device.makeLibrary(source: shaderSource, options: nil)
+        } catch {
+            throw WallpaperError("failed to compile shaders: \(error)")
+        }
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "tileVertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "tileFragment")
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        do {
+            pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        } catch {
+            throw WallpaperError("failed to create render pipeline: \(error)")
+        }
+
+        let samplerDescriptor = MTLSamplerDescriptor()
+        // Nearest when a cell is larger than the frame (crisp NES pixels),
+        // linear when smaller (filtered frames often exceed the cell).
+        samplerDescriptor.magFilter = .nearest
+        samplerDescriptor.minFilter = .linear
+        samplerDescriptor.sAddressMode = .clampToEdge
+        samplerDescriptor.tAddressMode = .clampToEdge
+        guard let sampler = device.makeSamplerState(descriptor: samplerDescriptor) else {
+            throw WallpaperError("failed to create sampler state")
+        }
+        self.sampler = sampler
+    }
+}
+
+/// Layer-hosting view whose backing layer is a CAMetalLayer sized in device
+/// pixels — setting contentsScale/drawableSize here is what makes tiles
+/// Retina-sharp (the old CALayer path never set contentsScale).
+final class WallpaperMetalView: NSView {
+    private let device: MTLDevice
+
+    init(frame: NSRect, device: MTLDevice) {
+        self.device = device
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
+
+    override func makeBackingLayer() -> CALayer {
+        let layer = CAMetalLayer()
+        layer.device = device
+        layer.pixelFormat = .bgra8Unorm
+        layer.framebufferOnly = true
+        layer.isOpaque = true
+        layer.backgroundColor = NSColor.black.cgColor
+        return layer
+    }
+
+    override func layout() {
+        super.layout()
+        updateDrawableSize()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateDrawableSize()
+    }
+
+    private func updateDrawableSize() {
+        let scale = window?.backingScaleFactor ?? 2.0
+        metalLayer.contentsScale = scale
+        let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        if size.width > 0, size.height > 0, metalLayer.drawableSize != size {
+            metalLayer.drawableSize = size
+        }
+    }
+}
+
+/// Renders one window's columns x rows grid. Textures are keyed by tile
+/// slot index (rotation replaces the TileProcess in a slot, never the
+/// texture: the filter — and therefore the frame size — is fixed per run).
+final class TileGridRenderer {
+    private let context: MetalContext
+    private let metalLayer: CAMetalLayer
+    private let columns: Int
+    private let rows: Int
+    private let textures: [MTLTexture]
+    private var lastUploaded: [UInt32?]
+
+    init(context: MetalContext, view: WallpaperMetalView,
+         columns: Int, rows: Int, tileWidth: Int, tileHeight: Int) throws {
+        self.context = context
+        self.metalLayer = view.metalLayer
+        self.columns = columns
+        self.rows = rows
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: tileWidth, height: tileHeight,
+            mipmapped: false)
+        descriptor.usage = .shaderRead
+        var textures: [MTLTexture] = []
+        for _ in 0..<(columns * rows) {
+            guard let texture = context.device.makeTexture(descriptor: descriptor) else {
+                throw WallpaperError("failed to allocate tile texture")
+            }
+            textures.append(texture)
+        }
+        self.textures = textures
+        self.lastUploaded = Array(repeating: nil, count: columns * rows)
+    }
+
+    /// Rotation swapped the helper in this slot: the new process restarts
+    /// frame_count, which could coincidentally match the old value, so force
+    /// the next draw to re-upload.
+    func invalidateTile(_ localIndex: Int) {
+        guard lastUploaded.indices.contains(localIndex) else { return }
+        lastUploaded[localIndex] = nil
+    }
+
+    /// Upload changed tiles and draw the grid. `tiles` is the controller's
+    /// full tile array; `range` selects this window's slice.
+    func draw(tiles: [TileProcess], range: Range<Int>) {
+        // Upload pass, before acquiring a drawable: replaceRegion copies
+        // synchronously from the mapped shm pointer, no intermediate buffer.
+        for (local, index) in range.enumerated() {
+            guard index < tiles.count else { break }
+            let tile = tiles[index]
+            if let last = lastUploaded[local], tile.frameCount == last { continue }
+            let texture = textures[local]
+            let uploaded = tile.withFrontBuffer { pixels, bytesPerRow in
+                texture.replace(
+                    region: MTLRegionMake2D(0, 0, texture.width, texture.height),
+                    mipmapLevel: 0, withBytes: pixels, bytesPerRow: bytesPerRow)
+            }
+            if let uploaded { lastUploaded[local] = uploaded.frameCount }
+        }
+
+        guard let drawable = metalLayer.nextDrawable() else { return } // starved: skip frame
+        guard let commandBuffer = context.queue.makeCommandBuffer() else { return }
+
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = drawable.texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        encoder.setRenderPipelineState(context.pipeline)
+        encoder.setFragmentSamplerState(context.sampler, index: 0)
+
+        let drawableWidth = CGFloat(drawable.texture.width)
+        let drawableHeight = CGFloat(drawable.texture.height)
+        let cellWidth = drawableWidth / CGFloat(columns)
+        let cellHeight = drawableHeight / CGFloat(rows)
+
+        for (local, index) in range.enumerated() {
+            guard index < tiles.count, lastUploaded[local] != nil else { continue }
+            let texture = textures[local]
+            // Aspect-fit letterbox in the cell (matches the old
+            // .resizeAspect), computed in drawable pixels; row 0 = top.
+            let scale = min(cellWidth / CGFloat(texture.width),
+                            cellHeight / CGFloat(texture.height))
+            let width = CGFloat(texture.width) * scale
+            let height = CGFloat(texture.height) * scale
+            let col = local % columns
+            let row = local / columns
+            let x = CGFloat(col) * cellWidth + (cellWidth - width) / 2
+            let y = CGFloat(row) * cellHeight + (cellHeight - height) / 2
+            var rect = SIMD4<Float>(
+                Float(2 * x / drawableWidth - 1),
+                Float(1 - 2 * (y + height) / drawableHeight),
+                Float(2 * width / drawableWidth),
+                Float(2 * height / drawableHeight))
+            encoder.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
+            encoder.setFragmentTexture(texture, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
+
+        encoder.endEncoding()
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
+}

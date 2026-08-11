@@ -10,6 +10,7 @@ struct WallpaperSettings {
     static let rowsKey = "GridRows"
     static let rotationMinutesKey = "RotationMinutes"
     static let includeROMsWithoutMoviesKey = "IncludeROMsWithoutMovies"
+    static let videoFilterKey = "VideoFilter"
 
     var romsDir: String?
     var moviesDir: String?
@@ -17,6 +18,7 @@ struct WallpaperSettings {
     var rows: Int
     var rotationMinutes: Int // 0 = never rotate
     var includeROMsWithoutMovies: Bool
+    var videoFilter: VideoFilter
 
     var rotationInterval: TimeInterval? {
         rotationMinutes > 0 ? TimeInterval(rotationMinutes) * 60 : nil
@@ -31,7 +33,9 @@ struct WallpaperSettings {
             rows: (defaults.object(forKey: rowsKey) as? Int ?? 2).clamped(to: 1...6),
             rotationMinutes: max(0, defaults.object(forKey: rotationMinutesKey) as? Int ?? 10),
             includeROMsWithoutMovies: defaults.object(
-                forKey: includeROMsWithoutMoviesKey) as? Bool ?? true)
+                forKey: includeROMsWithoutMoviesKey) as? Bool ?? true,
+            videoFilter: VideoFilter(
+                rawValue: defaults.string(forKey: videoFilterKey) ?? "") ?? .none)
     }
 
     func save() {
@@ -42,6 +46,7 @@ struct WallpaperSettings {
         defaults.set(rows, forKey: Self.rowsKey)
         defaults.set(rotationMinutes, forKey: Self.rotationMinutesKey)
         defaults.set(includeROMsWithoutMovies, forKey: Self.includeROMsWithoutMoviesKey)
+        defaults.set(videoFilter.rawValue, forKey: Self.videoFilterKey)
     }
 }
 
@@ -206,7 +211,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             let controller = try WallpaperController(
                 tileSource: tileSource,
                 rotationInterval: settings.rotationInterval,
-                columns: settings.columns, rows: settings.rows, screens: [screen])
+                columns: settings.columns, rows: settings.rows, screens: [screen],
+                filter: settings.videoFilter)
             controller.userPaused = userWantsPause
             self.controller = controller
         } catch {

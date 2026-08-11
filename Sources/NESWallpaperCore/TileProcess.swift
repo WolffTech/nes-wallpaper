@@ -10,14 +10,10 @@ public final class TileProcess {
     private let stdin: FileHandle
     private var shm: UnsafeMutablePointer<nes_shm_t>?
 
-    /// frame_count as of the last makeImage(); compare with frameCount to
-    /// skip repaints when the helper hasn't published a new frame.
-    public private(set) var lastFrameCount: UInt32 = 0
-
     public init(helper: URL, shmName: String, rom: String, movie: String?,
-                startFrame: Int = 0, loop: Bool = true) throws {
+                startFrame: Int = 0, loop: Bool = true, filter: VideoFilter = .none) throws {
         self.shmName = shmName
-        var arguments = ["--shm", shmName, "--rom", rom]
+        var arguments = ["--shm", shmName, "--rom", rom, "--filter", filter.rawValue]
         if let movie {
             arguments += ["--movie", movie]
             if startFrame > 0 { arguments += ["--start-frame", String(startFrame)] }
@@ -56,29 +52,25 @@ public final class TileProcess {
         return nes_shm_load(&shm.pointee.frame_count)
     }
 
-    /// Snapshot the last completed buffer as a CGImage. Copies the pixels
-    /// out: the shm buffer will be rewritten while CoreAnimation still holds
-    /// the image.
-    public func makeImage() -> CGImage? {
+    /// Frame dimensions from the shm header, once the segment is open.
+    public var frameSize: (width: Int, height: Int)? {
         guard let shm else { return nil }
-        let width = Int(NES_SHM_WIDTH)
-        let height = Int(NES_SHM_HEIGHT)
-        let pixbytes = width * height * 4 // NES_SHM_PIXBYTES (macro doesn't import)
-        let idx = Int(nes_shm_load(&shm.pointee.front))
-        lastFrameCount = nes_shm_load(&shm.pointee.frame_count)
-        // `pixels` doesn't import into Swift (its bound uses that macro), so
-        // locate it from the end of the struct: it is the last field.
-        let pixelsOffset = MemoryLayout<nes_shm_t>.size - 2 * pixbytes
-        let pixels = (UnsafeMutableRawPointer(shm)
-            + pixelsOffset
-            + idx * pixbytes).assumingMemoryBound(to: UInt8.self)
-        guard let data = CFDataCreate(nil, pixels, pixbytes),
-              let provider = CGDataProvider(data: data) else { return nil }
-        return CGImage(
-            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        return (Int(shm.pointee.width), Int(shm.pointee.height))
+    }
+
+    /// Runs body with the last completed buffer (acquire-load of `front`)
+    /// and its bytesPerRow, returning the frame_count sampled alongside it.
+    /// Same tearing guarantees as ever: the buffer may be republished while
+    /// body runs only if the helper laps a whole frame, which the double
+    /// buffer prevents. nil until the segment is open.
+    public func withFrontBuffer<R>(_ body: (UnsafeRawPointer, _ bytesPerRow: Int) -> R)
+        -> (frameCount: UInt32, result: R)?
+    {
+        guard let shm else { return nil }
+        let count = nes_shm_load(&shm.pointee.frame_count)
+        let idx = nes_shm_load(&shm.pointee.front)
+        let result = body(nes_shm_pixels(shm, idx), Int(shm.pointee.pitch))
+        return (count, result)
     }
 
     public func pause() { send("pause\n") }

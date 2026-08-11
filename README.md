@@ -28,7 +28,9 @@ swift build
 | `nes-helper` | One emulator instance publishing frames to shared memory |
 | `nes-wallpaper` | The wallpaper app: spawns one helper per tile, renders the grid |
 
-The FCEUX core keeps global state, so the app runs one `nes-helper` process per tile; each publishes 256×240 RGBA frames into a double-buffered POSIX shared-memory segment that the app composites at 60 Hz.
+The FCEUX core keeps global state, so the app runs one `nes-helper` process per tile; each publishes frames into a double-buffered POSIX shared-memory segment that the app composites with Metal, one texture per tile, driven by a per-display CADisplayLink.
+
+Frames pass through FCEUX's own CPU video filters inside each helper (`--filter`, or the Video Filter setting): `none` (raw 256×240), the blargg NTSC family (`ntsc-composite`, `ntsc-svideo`, `ntsc-rgb`, `ntsc-mono` at 602×480), `hq2x`/`hq3x`, and `scale2x`/`scale3x`. Filtered output is published at the filter's native size (up to 768×720) and scaled to the tile on the GPU.
 
 ## Installing as an app
 
@@ -50,6 +52,9 @@ swift build
 
 # Wallpaper (test ROM + synthetic movie; substitute your own rom:movie pairs)
 ./.build/out/Products/Debug/nes-wallpaper TestData/nestest.nes:TestData/nestest.fm2
+
+# Same, with a CRT filter
+./.build/out/Products/Debug/nes-wallpaper --filter ntsc-composite TestData/nestest.nes:TestData/nestest.fm2
 
 # Library mode: point at folders of ROMs and FM2 movies (e.g. from tasvideos.org).
 # Movies are matched to ROMs by the checksum in their header; each tile picks a

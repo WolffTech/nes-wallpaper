@@ -11,22 +11,28 @@ extern "C" {
 /* Shared-memory frame transport between a nes-helper emulator process
    (writer) and the wallpaper app (reader).
 
-   Double-buffered: the writer fills pixels[back], then publishes it by
+   Double-buffered: the writer fills buffer `back`, then publishes it by
    storing the buffer index into `front` (release). The reader loads
    `front` (acquire) and reads that buffer. A frame may be skipped or
-   shown twice under scheduling jitter; it is never torn. */
+   shown twice under scheduling jitter; it is never torn.
+
+   v2: frame dimensions are runtime fields chosen by the writer (they
+   depend on the video filter: 256x240 raw, 602x480 NTSC, up to 768x720
+   hq3x/scale3x). Two BGRX8888 buffers (bytes B,G,R,X in memory; the X
+   byte is undefined — treat as opaque) follow immediately after the
+   header, each width*height*4 bytes, tightly packed (pitch == width*4). */
 
 #define NES_SHM_MAGIC   0x4E455331u /* "NES1" */
-#define NES_SHM_VERSION 1u
-#define NES_SHM_WIDTH   256u
-#define NES_SHM_HEIGHT  240u
-#define NES_SHM_PIXBYTES (NES_SHM_WIDTH * NES_SHM_HEIGHT * 4u)
+#define NES_SHM_VERSION 2u
+#define NES_SHM_MAX_WIDTH  768u
+#define NES_SHM_MAX_HEIGHT 720u
 
 typedef struct {
     uint32_t magic;
     uint32_t version;
-    uint32_t width;  /* NES_SHM_WIDTH */
-    uint32_t height; /* NES_SHM_HEIGHT */
+    uint32_t width;  /* set by the writer before magic appears */
+    uint32_t height;
+    uint32_t pitch;  /* always width * 4 */
 
     /* Written by the helper, read by the app. Use the nes_shm_load/store
        helpers below; Swift cannot express C11 atomics directly. */
@@ -35,7 +41,7 @@ typedef struct {
     volatile uint32_t movie_playing; /* 1 while an FM2 is driving input */
     volatile uint32_t movie_frame;   /* current movie frame index */
 
-    uint8_t pixels[2][NES_SHM_PIXBYTES]; /* RGBA8888, tightly packed */
+    /* pixel buffers follow immediately after the struct */
 } nes_shm_t;
 
 static inline uint32_t nes_shm_load(const volatile uint32_t *p) {
@@ -46,11 +52,25 @@ static inline void nes_shm_store(volatile uint32_t *p, uint32_t v) {
     __atomic_store_n(p, v, __ATOMIC_RELEASE);
 }
 
+static inline size_t nes_shm_pix_bytes(uint32_t width, uint32_t height) {
+    return (size_t)width * height * 4u;
+}
+
+static inline size_t nes_shm_total_size(uint32_t width, uint32_t height) {
+    return sizeof(nes_shm_t) + 2u * nes_shm_pix_bytes(width, height);
+}
+
+/* Start of pixel buffer `idx` (0 or 1). Shared by writer and reader so
+   the layout lives in exactly one place. */
+static inline uint8_t *nes_shm_pixels(nes_shm_t *shm, uint32_t idx) {
+    return (uint8_t *)(shm + 1) + (size_t)idx * nes_shm_pix_bytes(shm->width, shm->height);
+}
+
 /* Create (writer) or open (reader) a mapping. Names must start with '/'
    and stay under 31 chars (macOS PSHMNAMLEN), e.g. "/nes.12345.0".
    Returns NULL on failure. The creator unlinks the name on nes_shm_close,
    so the segment disappears when both sides unmap. */
-nes_shm_t *nes_shm_create(const char *name);
+nes_shm_t *nes_shm_create(const char *name, uint32_t width, uint32_t height);
 nes_shm_t *nes_shm_open(const char *name);
 void nes_shm_close(nes_shm_t *shm, const char *name, int is_creator);
 

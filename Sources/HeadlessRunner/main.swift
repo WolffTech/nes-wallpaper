@@ -4,13 +4,29 @@ import ImageIO
 import UniformTypeIdentifiers
 import CFCEUX
 
-// Usage: nes-headless <rom> [--movie file.fm2] [--frames N] [--dump-every N] [--out dir]
+// Usage: nes-headless <rom> [--movie file.fm2] [--frames N] [--dump-every N]
+//        [--out dir] [--filter name]
+
+// Same name -> (specfilt, specfilteropt) map as nes-helper; see
+// VideoFilter.swift in NESWallpaperCore.
+let filterMap: [String: (Int32, Int32)] = [
+    "none": (0, 0),
+    "hq2x": (1, 0),
+    "scale2x": (2, 0),
+    "ntsc-composite": (3, 0),
+    "ntsc-svideo": (3, 1),
+    "ntsc-rgb": (3, 2),
+    "ntsc-mono": (3, 3),
+    "hq3x": (4, 0),
+    "scale3x": (5, 0),
+]
 
 var romPath: String?
 var moviePath: String?
 var frames = 600
 var dumpEvery = 0
 var outDir = "frames"
+var filterName = "none"
 
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
@@ -20,22 +36,25 @@ while !args.isEmpty {
     case "--frames": frames = Int(args.removeFirst()) ?? frames
     case "--dump-every": dumpEvery = Int(args.removeFirst()) ?? 0
     case "--out": outDir = args.removeFirst()
+    case "--filter": filterName = args.isEmpty ? filterName : args.removeFirst()
     default: romPath = arg
     }
 }
 
-guard let romPath else {
-    FileHandle.standardError.write("usage: nes-headless <rom> [--movie file.fm2] [--frames N] [--dump-every N] [--out dir]\n".data(using: .utf8)!)
+guard let romPath, let filter = filterMap[filterName] else {
+    FileHandle.standardError.write("usage: nes-headless <rom> [--movie file.fm2] [--frames N] [--dump-every N] [--out dir] [--filter \(filterMap.keys.sorted().joined(separator: "|"))]\n".data(using: .utf8)!)
     exit(2)
 }
 
-func writePNG(_ rgba: UnsafePointer<UInt8>, width: Int, height: Int, to url: URL) {
-    let data = CFDataCreate(nil, rgba, width * height * 4)!
+func writePNG(_ bgrx: UnsafePointer<UInt8>, width: Int, height: Int, to url: URL) {
+    let data = CFDataCreate(nil, bgrx, width * height * 4)!
     let provider = CGDataProvider(data: data)!
+    // The shim emits BGRX8888: little-endian 0x00RRGGBB words.
     let image = CGImage(
         width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
         bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue
+            | CGBitmapInfo.byteOrder32Little.rawValue),
         provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
     let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
     CGImageDestinationAddImage(dest, image, nil)
@@ -54,20 +73,26 @@ if let moviePath {
     print("movie playing: \(moviePath)")
 }
 
+// After load_game: the NTSC blit path requires a loaded game.
+guard fceux_set_video_filter(filter.0, filter.1) != 0 else {
+    fatalError("failed to set video filter \(filterName)")
+}
+
 if dumpEvery > 0 {
     try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
 }
 
 let width = Int(fceux_frame_width())
 let height = Int(fceux_frame_height())
+print("filter: \(filterName) (\(width)x\(height))")
 let start = Date()
 
 for frame in 0..<frames {
     let wantDump = dumpEvery > 0 && (frame % dumpEvery == 0 || frame == frames - 1)
-    let rgba = fceux_run_frame(0)
-    if wantDump, let rgba {
+    let bgrx = fceux_run_frame(0)
+    if wantDump, let bgrx {
         let url = URL(fileURLWithPath: outDir).appendingPathComponent(String(format: "frame_%06d.png", frame))
-        writePNG(rgba, width: width, height: height, to: url)
+        writePNG(bgrx, width: width, height: height, to: url)
     }
     if moviePath != nil && fceux_movie_is_playing() == 0 {
         print("movie finished at frame \(fceux_movie_frame())")
