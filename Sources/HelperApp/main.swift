@@ -2,10 +2,13 @@ import Foundation
 import CFCEUX
 import CShm
 
-// Usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>] [--loop]
+// Usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>]
+//        [--start-frame N] [--loop]
 //
 // Runs one FCEUX instance and publishes frames into a shared-memory segment
 // at NES NTSC rate. Quits on SIGTERM/SIGINT, stdin "quit"/EOF, or orphaning.
+// --start-frame fast-forwards the movie (unpaced, render skipped) so the
+// tile starts mid-game, like the original saver's checkpoints.
 
 func log(_ msg: String) {
     FileHandle.standardError.write("nes-helper[\(getpid())]: \(msg)\n".data(using: .utf8)!)
@@ -14,6 +17,7 @@ func log(_ msg: String) {
 var shmName: String?
 var romPath: String?
 var moviePath: String?
+var startFrame = 0
 var loopMovie = false
 var badArgs = false
 
@@ -24,13 +28,16 @@ while !args.isEmpty {
     case "--shm" where !args.isEmpty: shmName = args.removeFirst()
     case "--rom" where !args.isEmpty: romPath = args.removeFirst()
     case "--movie" where !args.isEmpty: moviePath = args.removeFirst()
+    case "--start-frame" where !args.isEmpty:
+        guard let n = Int(args.removeFirst()), n >= 0 else { badArgs = true; break }
+        startFrame = n
     case "--loop": loopMovie = true
     default: badArgs = true
     }
 }
 
 guard !badArgs, let shmName, let romPath else {
-    FileHandle.standardError.write("usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>] [--loop]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>] [--start-frame N] [--loop]\n".data(using: .utf8)!)
     exit(2)
 }
 
@@ -88,6 +95,26 @@ Thread.detachNewThread {
 let pixBytes = Int(NES_SHM_WIDTH * NES_SHM_HEIGHT * 4)
 let pixelsBase = UnsafeMutableRawPointer(shm) + (MemoryLayout<nes_shm_t>.size - 2 * pixBytes)
 
+// Fast-forward to the requested movie frame: unpaced, render skipped, nothing
+// published (the reader tolerates a black tile while frame_count is 0). Stops
+// early if the movie is shorter than the request. Only the initial playback
+// fast-forwards; a --loop restart goes back to frame 0.
+if moviePath != nil, startFrame > 0 {
+    let ffStart = DispatchTime.now()
+    var skipped = 0
+    while fceux_movie_frame() < startFrame, fceux_movie_is_playing() != 0, !readFlags().quit {
+        _ = fceux_run_frame(1) // skip_render: returns NULL, do not publish
+        skipped += 1
+    }
+    let seconds = Double(DispatchTime.now().uptimeNanoseconds &- ffStart.uptimeNanoseconds)
+        / 1_000_000_000.0
+    log(String(format: "fast-forwarded %d frames to movie frame %d in %.2fs%@",
+               skipped, fceux_movie_frame(), seconds,
+               fceux_movie_is_playing() == 0 ? " (movie ended early)" : ""))
+}
+
+// The paced schedule's start reference is taken here, after any fast-forward,
+// so the loop does not burst-run to "catch up" on the fast-forward time.
 let frameNanos = 1_000_000_000.0 / 60.0988
 let start = DispatchTime.now()
 var tick: UInt64 = 0

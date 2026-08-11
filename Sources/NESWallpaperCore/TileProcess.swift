@@ -14,11 +14,13 @@ public final class TileProcess {
     /// skip repaints when the helper hasn't published a new frame.
     public private(set) var lastFrameCount: UInt32 = 0
 
-    public init(helper: URL, shmName: String, rom: String, movie: String?, loop: Bool = true) throws {
+    public init(helper: URL, shmName: String, rom: String, movie: String?,
+                startFrame: Int = 0, loop: Bool = true) throws {
         self.shmName = shmName
         var arguments = ["--shm", shmName, "--rom", rom]
         if let movie {
             arguments += ["--movie", movie]
+            if startFrame > 0 { arguments += ["--start-frame", String(startFrame)] }
             if loop { arguments.append("--loop") }
         }
         let pipe = Pipe()
