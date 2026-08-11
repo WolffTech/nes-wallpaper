@@ -2,7 +2,7 @@
 
 A modern macOS recreation of the 2016 UberNES "Nintendo Saver": a live desktop wallpaper that tiles NES games playing back tool-assisted speedrun (TAS) movies, rendered behind your desktop icons.
 
-The original (`Nintendo Saver.saver`, kept in this repo for reference) was an x86_64 screensaver built on the UberNES emulator and its proprietary movie format. This project replaces both halves with maintained equivalents:
+The original was an x86_64 screensaver built on the UberNES emulator and its proprietary movie format. This project replaces both halves with maintained equivalents:
 
 - **Emulator**: the [FCEUX](https://github.com/TASEmulators/fceux) core, vendored and compiled directly into the app (see `vendor/VENDOR.md`).
 - **Movies**: FCEUX's FM2 format, the native format of the huge [TASVideos](https://tasvideos.org) NES library. FM2 files only play back deterministically on FCEUX itself, which is why that core was chosen.
