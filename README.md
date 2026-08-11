@@ -39,6 +39,11 @@ swift build
 
 # Wallpaper (test ROM + synthetic movie; substitute your own rom:movie pairs)
 ./.build/out/Products/Debug/nes-wallpaper TestData/nestest.nes:TestData/nestest.fm2
+
+# Library mode: point at folders of ROMs and FM2 movies (e.g. from tasvideos.org).
+# Movies are matched to ROMs by the checksum in their header; each tile picks a
+# random match, starts at a random mid-movie point, and rotates every 10 minutes.
+./.build/out/Products/Debug/nes-wallpaper --grid 4x3 --rotate 600 --roms ~/NES/roms --movies ~/NES/movies
 ```
 
 `TestData/` contains `nestest.nes` (the standard freely-distributable CPU test ROM) and a generated FM2 that drives its menu, used as an always-available smoke test.
