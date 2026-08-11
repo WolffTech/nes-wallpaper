@@ -51,6 +51,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var controller: WallpaperController?
     private var settingsWindow: SettingsWindowController?
+    private var browserWindow: TASBrowserWindowController?
 
     /// User's pause intent; sticks across stop/start and screen lock (the
     /// controller combines it with its own automatic pause conditions).
@@ -88,6 +89,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                                       action: #selector(openSettings), keyEquivalent: "")
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        let browserItem = NSMenuItem(title: "Browse TASVideos…",
+                                     action: #selector(openBrowser), keyEquivalent: "")
+        browserItem.target = self
+        menu.addItem(browserItem)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit",
@@ -131,6 +137,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             settingsWindow = SettingsWindowController(menuBar: self)
         }
         settingsWindow?.show()
+    }
+
+    @objc func openBrowser() {
+        if browserWindow == nil {
+            browserWindow = TASBrowserWindowController()
+        }
+        browserWindow?.show()
     }
 
     /// Called by the settings window's Apply button after it has saved the

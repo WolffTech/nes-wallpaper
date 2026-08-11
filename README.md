@@ -39,6 +39,8 @@ open "dist/NES Wallpaper.app"
 
 The app lives in the menu bar (no Dock icon). Pick your ROM and movie folders in Settings…, and the wallpaper starts automatically on the next launch. It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time.
 
+Browse TASVideos… lists every current NES publication in FM2 format straight from the [tasvideos.org API](https://tasvideos.org/api) and downloads runs into your movies folder. Each row shows whether a matching ROM (by the checksum in the movie's header) is already in your ROM folder; new movies are picked up the next time the wallpaper starts.
+
 ## Trying it
 
 ```sh
