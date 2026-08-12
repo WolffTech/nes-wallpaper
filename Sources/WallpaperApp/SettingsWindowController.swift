@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 import NESWallpaperCore
 
@@ -40,8 +41,41 @@ final class SettingsModel: ObservableObject {
     }
 }
 
+/// Login-item state, applied immediately rather than via the Apply button:
+/// the system (SMAppService), not UserDefaults, is the source of truth.
+final class LoginItemModel: ObservableObject {
+    @Published var enabled = false
+    @Published var lastError: String?
+
+    /// SMAppService can only register an installed .app bundle, not the
+    /// bare SwiftPM executable used during development.
+    let available = Bundle.main.bundleURL.pathExtension == "app"
+
+    func load() {
+        guard available else { return }
+        enabled = SMAppService.mainApp.status == .enabled
+        lastError = nil
+    }
+
+    func set(_ wantEnabled: Bool) {
+        guard available else { return }
+        do {
+            if wantEnabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+        enabled = SMAppService.mainApp.status == .enabled
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
+    @ObservedObject var loginItem: LoginItemModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,6 +121,20 @@ struct SettingsView: View {
                 } footer: {
                     Text("Minutes between tile shuffles. 0 means never rotate.")
                 }
+                Section {
+                    Toggle("Launch at Login", isOn: Binding(
+                        get: { loginItem.enabled },
+                        set: { loginItem.set($0) }))
+                        .disabled(!loginItem.available)
+                } footer: {
+                    if !loginItem.available {
+                        Text("Available when running the installed app (see Scripts/make-app.sh).")
+                    } else if let error = loginItem.lastError {
+                        Text(error).foregroundStyle(.red)
+                    } else {
+                        Text("Takes effect immediately; no need to press Apply.")
+                    }
+                }
             }
             .formStyle(.grouped)
             .scrollDisabled(true) // everything fits; never show a scroll bar
@@ -102,7 +150,7 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(width: 480, height: 520)
+        .frame(width: 480, height: 600)
     }
 
     private func folderRow(title: String, path: String?,
@@ -140,6 +188,7 @@ struct SettingsView: View {
 /// window just hides it.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let model = SettingsModel()
+    private let loginItem = LoginItemModel()
 
     init(menuBar: MenuBarController) {
         let window = NSWindow(
@@ -151,9 +200,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         super.init(window: window)
         model.onApply = { [weak menuBar] in menuBar?.settingsApplied() }
-        window.contentViewController = NSHostingController(rootView: SettingsView(model: model))
+        window.contentViewController = NSHostingController(
+            rootView: SettingsView(model: model, loginItem: loginItem))
         window.delegate = self
         model.load()
+        loginItem.load()
         window.center()
     }
 
@@ -162,6 +213,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func show() {
         model.load()
+        loginItem.load() // may have changed in System Settings meanwhile
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
