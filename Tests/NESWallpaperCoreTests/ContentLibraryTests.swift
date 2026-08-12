@@ -264,6 +264,60 @@ final class ContentLibraryTests: XCTestCase {
         XCTAssertTrue(sawMovieless)
     }
 
+    func testRandomTileSpecExcludesEveryMovieForDisplayedROM() throws {
+        let a = try writeROM(named: "a.nes", seed: 7)
+        let b = try writeROM(named: "b.nes", seed: 8)
+        _ = try writeFM2(named: "a-first.fm2",
+                         checksumLine: Self.base64Line(a.checksum), frames: 10)
+        _ = try writeFM2(named: "a-second.fm2",
+                         checksumLine: Self.base64Line(a.checksum), frames: 20)
+        let bMovie = try writeFM2(named: "b.fm2",
+                                  checksumLine: Self.base64Line(b.checksum), frames: 30)
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        for _ in 0..<20 {
+            let spec = try XCTUnwrap(library.randomTileSpec(
+                includeROMsWithoutMovies: true,
+                excludingROMs: [a.url.path]))
+            XCTAssertEqual(spec.rom, b.url.path)
+            XCTAssertEqual(spec.movie, bMovie.path)
+        }
+        XCTAssertNil(library.randomTileSpec(
+            includeROMsWithoutMovies: true,
+            excludingROMs: [a.url.path, b.url.path]))
+    }
+
+    func testRandomTileSpecExcludesDisplayedROMWithoutMovie() throws {
+        let a = try writeROM(named: "a.nes", seed: 9)
+        let b = try writeROM(named: "b.nes", seed: 10)
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        let spec = try XCTUnwrap(library.randomTileSpec(
+            includeROMsWithoutMovies: true,
+            excludingROMs: [a.url.path]))
+        XCTAssertEqual(spec.rom, b.url.path)
+        XCTAssertNil(spec.movie)
+    }
+
+    func testRepeatedExcludedPicksAreUniqueUntilLibraryIsExhausted() throws {
+        for index in 0..<4 {
+            _ = try writeROM(named: "game-\(index).nes", seed: UInt8(20 + index))
+        }
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        var selectedROMs: Set<String> = []
+        for _ in 0..<4 {
+            let spec = try XCTUnwrap(library.randomTileSpec(
+                includeROMsWithoutMovies: true,
+                excludingROMs: selectedROMs))
+            XCTAssertTrue(selectedROMs.insert(spec.rom).inserted)
+        }
+        XCTAssertNil(library.randomTileSpec(
+            includeROMsWithoutMovies: true,
+            excludingROMs: selectedROMs))
+        XCTAssertNotNil(library.randomTileSpec(includeROMsWithoutMovies: true))
+    }
+
     // MARK: - Real checked-in fixture
 
     private var testDataDir: URL {

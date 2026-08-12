@@ -77,7 +77,7 @@ guard menuBarMode || !pairs.isEmpty || (romsDir != nil && moviesDir != nil) else
 // original saver's checkpoints), or a rom without a movie playing its title/
 // attract screen. Explicit pairs mode keeps the CLI-provided order and
 // startFrame.
-func makeTileSource() -> () -> TileSpec {
+func makeTileSource() -> (Set<String>) -> TileSpec? {
     if let romsDir, let moviesDir {
         let library = ContentLibrary(
             romsDir: URL(fileURLWithPath: romsDir, isDirectory: true),
@@ -86,10 +86,14 @@ func makeTileSource() -> () -> TileSpec {
             FileHandle.standardError.write(Data("nes-wallpaper: nothing playable in library\n".utf8))
             exit(1)
         }
-        return { library.randomTileSpec(includeROMsWithoutMovies: true)! }
+        return { excludedROMs in
+            library.randomTileSpec(
+                includeROMsWithoutMovies: true,
+                excludingROMs: excludedROMs)
+        }
     }
     var pairIndex = 0
-    return {
+    return { _ in
         defer { pairIndex += 1 }
         let pair = pairs[pairIndex % pairs.count]
         return TileSpec(rom: pair.rom, movie: pair.movie, startFrame: startFrame)

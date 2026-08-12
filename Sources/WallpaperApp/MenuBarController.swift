@@ -166,7 +166,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// Build a tile source from the configured library: each tile plays a
     /// random pick from the library (same policy as the CLI's library mode).
     /// Returns nil when the folders are unset or yield nothing playable.
-    private static func makeTileSource(settings: WallpaperSettings) -> (() -> TileSpec)? {
+    private static func makeTileSource(settings: WallpaperSettings)
+        -> ((Set<String>) -> TileSpec?)?
+    {
         guard let romsDir = settings.romsDir, !romsDir.isEmpty,
               let moviesDir = settings.moviesDir, !moviesDir.isEmpty else { return nil }
         let library = ContentLibrary(
@@ -176,8 +178,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         guard library.randomTileSpec(includeROMsWithoutMovies: includeROMs) != nil else {
             return nil
         }
-        // The library is immutable and non-empty, so the pick never fails.
-        return { library.randomTileSpec(includeROMsWithoutMovies: includeROMs)! }
+        // The library is immutable; exclusions may temporarily exhaust it.
+        return { excludedROMs in
+            library.randomTileSpec(
+                includeROMsWithoutMovies: includeROMs,
+                excludingROMs: excludedROMs)
+        }
     }
 
     private func startWallpaper(interactive: Bool) {

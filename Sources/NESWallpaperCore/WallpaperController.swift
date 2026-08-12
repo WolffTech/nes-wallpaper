@@ -19,6 +19,30 @@ public struct TileSpec {
     }
 }
 
+/// Pure selection policy shared by startup and rotation. Keeping the fallback
+/// decisions separate from process management makes the uniqueness behavior
+/// deterministic and unit-testable.
+enum TileSelectionPolicy {
+    typealias Source = (Set<String>) -> TileSpec?
+
+    static func startup(source: Source, assigned: [TileSpec]) -> TileSpec? {
+        let assignedROMs = Set(assigned.map(\.rom))
+        return source(assignedROMs) ?? source([])
+    }
+
+    static func replacement(source: Source, displayed: [TileSpec],
+                            replacing index: Int) -> TileSpec? {
+        guard displayed.indices.contains(index) else { return nil }
+        let allDisplayedROMs = Set(displayed.map(\.rom))
+        let otherDisplayedROMs = Set(displayed.enumerated().compactMap { offset, spec in
+            offset == index ? nil : spec.rom
+        })
+        return source(allDisplayedROMs)
+            ?? source(otherDisplayedROMs)
+            ?? source([])
+    }
+}
+
 /// Routes one window's CADisplayLink callback to the controller.
 /// (CADisplayLink needs an @objc target, so this small NSObject stands in
 /// for the plain-Swift controller and also remembers which window's
@@ -58,12 +82,16 @@ public final class WallpaperController {
     private let rows: Int
     private let filter: VideoFilter
     private let helper: URL
-    private let tileSource: () -> TileSpec
+    private let tileSource: TileSelectionPolicy.Source
     private var slots: [ScreenSlot] = []
     private var tiles: [TileProcess] = []
+    /// Selection metadata kept parallel with `tiles`, since TileProcess only
+    /// owns the helper and shared-memory transport.
+    private var tileSpecs: [TileSpec] = []
     private let context: MetalContext
     private var rotationTimer: Timer?
     private var rotationIndex = 0 // next tile to rotate, round-robin
+    private var rotationInProgress = false
     private var shmCounter = 0    // fresh shm name for every spawned helper
     private let rotationQueue = DispatchQueue(label: "tile-rotation")
     private var observer: NSObjectProtocol?
@@ -86,7 +114,7 @@ public final class WallpaperController {
         }
         var index = 0
         try self.init(
-            tileSource: {
+            tileSource: { _ in
                 defer { index += 1 }
                 let pair = pairs[index % pairs.count]
                 return TileSpec(rom: pair.rom, movie: pair.movie, startFrame: 0)
@@ -95,11 +123,14 @@ public final class WallpaperController {
             filter: filter)
     }
 
-    /// tileSource is called once per tile at startup and once per rotation.
+    /// tileSource is called once per tile at startup and once per rotation,
+    /// with the ROM paths that should not be selected. It returns nil when
+    /// every playable ROM is excluded.
     /// With rotationInterval set, one tile is replaced every
     /// rotationInterval / tileCount seconds, round-robin, so tiles change on
     /// a stagger rather than all at once.
-    public init(tileSource: @escaping () -> TileSpec, rotationInterval: TimeInterval?,
+    public init(tileSource: @escaping (Set<String>) -> TileSpec?,
+                rotationInterval: TimeInterval?,
                 columns: Int, rows: Int, filter: VideoFilter = .none) throws {
         guard columns > 0, rows > 0 else {
             throw WallpaperError("need at least one rom and a positive grid")
@@ -116,7 +147,14 @@ public final class WallpaperController {
         // first, then open their segments: startup (ROM load, shm create)
         // overlaps across processes.
         for _ in 0..<(columns * rows) {
-            tiles.append(try spawnTile(tileSource()))
+            // Fill without replacement while possible. A grid larger than
+            // the playable library necessarily falls back to duplicates.
+            guard let spec = TileSelectionPolicy.startup(
+                source: tileSource, assigned: tileSpecs) else {
+                throw WallpaperError("tile source produced no playable games")
+            }
+            tiles.append(try spawnTile(spec))
+            tileSpecs.append(spec)
         }
 
         for tile in tiles {
@@ -251,6 +289,8 @@ public final class WallpaperController {
         pauseObservers.removeAll()
         for tile in tiles { tile.terminate() }
         tiles.removeAll()
+        tileSpecs.removeAll()
+        rotationInProgress = false
     }
 
     deinit { shutdown() }
@@ -275,14 +315,26 @@ public final class WallpaperController {
     /// the next rotation attempt.
     private func rotateNextTile() {
         // Don't churn helpers while nobody can see the wallpaper.
-        guard !tiles.isEmpty, !emulationPaused else { return }
+        guard !tiles.isEmpty, !emulationPaused, !rotationInProgress else { return }
         let index = rotationIndex % tiles.count
         rotationIndex = (index + 1) % tiles.count
 
+        // Prefer a game that is entirely off-screen. If the library contains
+        // exactly one game per tile, allow the target tile to keep its own
+        // game rather than introducing a duplicate elsewhere. Only fall back
+        // to the full library when duplicates are unavoidable.
+        guard let spec = TileSelectionPolicy.replacement(
+            source: tileSource, displayed: tileSpecs, replacing: index) else {
+            Self.log("tile source produced no replacement game")
+            return
+        }
+        rotationInProgress = true
+
         let replacement: TileProcess
         do {
-            replacement = try spawnTile(tileSource())
+            replacement = try spawnTile(spec)
         } catch {
+            rotationInProgress = false
             Self.log("failed to spawn replacement tile: \(error)")
             return
         }
@@ -302,6 +354,7 @@ public final class WallpaperController {
                     replacement.terminate() // controller shut down mid-rotation
                     return
                 }
+                defer { self.rotationInProgress = false }
                 guard live else {
                     Self.log("replacement helper for \(replacement.shmName) never published; keeping old tile")
                     replacement.terminate()
@@ -314,6 +367,7 @@ public final class WallpaperController {
                 }
                 self.tiles[index].terminate()
                 self.tiles[index] = replacement
+                self.tileSpecs[index] = spec
                 // The replacement restarts frame_count; force a re-upload so
                 // a coincidental match can't leave the old game on screen.
                 for slot in self.slots { slot.renderer.invalidateTile(index) }

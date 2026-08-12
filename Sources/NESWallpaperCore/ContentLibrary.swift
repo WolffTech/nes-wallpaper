@@ -63,17 +63,23 @@ public final class ContentLibrary {
     }
 
     /// Uniform random pick across matched movies and, optionally, ROMs with
-    /// no matching movie. Matched picks start at a random point in the first
-    /// 70% of the movie; movie-less picks start at power-on with no input.
-    public func randomTileSpec(includeROMsWithoutMovies: Bool) -> TileSpec? {
-        let romOnlyCount = includeROMsWithoutMovies ? romsWithoutMovies.count : 0
-        let total = matches.count + romOnlyCount
+    /// no matching movie. Every movie for an excluded ROM is removed from the
+    /// candidate pool, so alternate runs of the same game cannot bypass the
+    /// exclusion. Matched picks start at a random point in the first 70% of
+    /// the movie; movie-less picks start at power-on with no input.
+    public func randomTileSpec(includeROMsWithoutMovies: Bool,
+                               excludingROMs: Set<String> = []) -> TileSpec? {
+        let eligibleMatches = matches.filter { !excludingROMs.contains($0.romURL.path) }
+        let eligibleROMs = includeROMsWithoutMovies
+            ? romsWithoutMovies.filter { !excludingROMs.contains($0.path) }
+            : []
+        let total = eligibleMatches.count + eligibleROMs.count
         guard total > 0 else { return nil }
         let index = Int.random(in: 0..<total)
-        guard index < matches.count else {
-            return TileSpec(rom: romsWithoutMovies[index - matches.count].path, movie: nil)
+        guard index < eligibleMatches.count else {
+            return TileSpec(rom: eligibleROMs[index - eligibleMatches.count].path, movie: nil)
         }
-        let match = matches[index]
+        let match = eligibleMatches[index]
         let maxStart = Int(Double(match.frameCount) * 0.7)
         return TileSpec(
             rom: match.romURL.path,
