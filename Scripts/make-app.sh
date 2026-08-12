@@ -1,6 +1,11 @@
 #!/bin/bash
 # Assembles a distributable "NES Wallpaper.app" bundle from the SwiftPM
 # release products. Safe to run from any cwd.
+#
+# CODESIGN_IDENTITY selects the signing identity (default "-", ad hoc).
+# A real identity, e.g. "Developer ID Application: Name (TEAMID)", also
+# enables the hardened runtime and a secure timestamp, as notarization
+# requires. See Scripts/notarize.sh for the full distribution flow.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,6 +15,7 @@ APP_NAME="NES Wallpaper"
 DIST_DIR="$REPO_ROOT/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 ICNS="$REPO_ROOT/Assets/AppIcon.icns"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 
 echo "==> Building (release)"
 swift build --package-path "$REPO_ROOT" -c release
@@ -44,10 +50,16 @@ fi
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
-echo "==> Codesigning (ad hoc)"
+if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+    echo "==> Codesigning (ad hoc)"
+    SIGN_FLAGS=(--timestamp=none)
+else
+    echo "==> Codesigning ($CODESIGN_IDENTITY)"
+    SIGN_FLAGS=(--options runtime --timestamp)
+fi
 # Sign the nested helper explicitly first (standalone binary), then the app.
-codesign --force --sign - --timestamp=none "$APP_DIR/Contents/MacOS/nes-helper"
-codesign --force --sign - --timestamp=none "$APP_DIR"
+codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" "$APP_DIR/Contents/MacOS/nes-helper"
+codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" "$APP_DIR"
 
 echo "==> Done: $APP_DIR"
 codesign -dv "$APP_DIR"

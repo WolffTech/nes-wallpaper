@@ -39,9 +39,29 @@ Frames pass through FCEUX's own CPU video filters inside each helper (`--filter`
 open "dist/NES Wallpaper.app"
 ```
 
-The app lives in the menu bar (no Dock icon). Pick your ROM and movie folders in Settings…, and the wallpaper starts automatically on the next launch. It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time. ROMs with no matching movie join the rotation too, playing their title or attract screen with no input (toggleable in Settings).
+The app lives in the menu bar (no Dock icon). Pick your ROM and movie folders in Settings…, and the wallpaper starts automatically each time the app launches after that. Turn on Launch at Login in Settings to have it start with your Mac (it registers with `SMAppService`, so it also appears under System Settings → General → Login Items). It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time. ROMs with no matching movie join the rotation too, playing their title or attract screen with no input (toggleable in Settings).
 
 Browse TASVideos… lists every current NES publication in FM2 format straight from the [tasvideos.org API](https://tasvideos.org/api) and downloads runs into your movies folder. Each row shows whether a matching ROM (by the checksum in the movie's header) is already in your ROM folder; new movies are picked up the next time the wallpaper starts.
+
+The app icon is generated from `Assets/nes-wallpaper-logo-concept.png` by `Scripts/make-icon.sh` (the source logo is never modified); the resulting `Assets/AppIcon.icns` is committed, so you only need to re-run the script if the logo changes.
+
+## Signing and distribution
+
+`make-app.sh` signs ad hoc by default, which is fine for the Mac that built it; other Macs will refuse to open the app without a right-click → Open. For a build any Mac will accept, sign with a Developer ID certificate and notarize:
+
+```sh
+# One-time setup:
+#  1. Create a "Developer ID Application" certificate
+#     (Xcode → Settings → Accounts → Manage Certificates → +)
+#  2. Store notarization credentials (app-specific password from account.apple.com):
+xcrun notarytool store-credentials nes-wallpaper \
+    --apple-id you@example.com --team-id TEAMID --password <app-specific-password>
+
+# Then, for each release:
+./Scripts/notarize.sh   # signs (hardened runtime), notarizes, staples, zips
+```
+
+The script auto-detects the Developer ID certificate in your keychain (override with `CODESIGN_IDENTITY`), submits with the `nes-wallpaper` keychain profile (override with `NOTARY_PROFILE`), and leaves a stapled app plus a distributable zip in `dist/`.
 
 ## Trying it
 
