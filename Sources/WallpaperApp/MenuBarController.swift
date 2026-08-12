@@ -203,15 +203,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             refreshMenuTitles()
             return
         }
-        guard let screen = NSScreen.main else {
-            log("no screen")
-            return
-        }
         do {
             let controller = try WallpaperController(
                 tileSource: tileSource,
                 rotationInterval: settings.rotationInterval,
-                columns: settings.columns, rows: settings.rows, screens: [screen],
+                columns: settings.columns, rows: settings.rows,
                 filter: settings.videoFilter)
             controller.userPaused = userWantsPause
             self.controller = controller

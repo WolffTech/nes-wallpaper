@@ -28,7 +28,7 @@ swift build
 | `nes-helper` | One emulator instance publishing frames to shared memory |
 | `nes-wallpaper` | The wallpaper app: spawns one helper per tile, renders the grid |
 
-The FCEUX core keeps global state, so the app runs one `nes-helper` process per tile; each publishes frames into a double-buffered POSIX shared-memory segment that the app composites with Metal, one texture per tile, driven by a per-display CADisplayLink.
+The FCEUX core keeps global state, so the app runs one `nes-helper` process per tile; each publishes frames into a double-buffered POSIX shared-memory segment that the app composites with Metal, one texture per tile, driven by a per-display CADisplayLink. Every attached display mirrors the same grid from the same helpers — extra displays cost only texture uploads and draws, not extra emulators — and windows follow displays as they are plugged and unplugged.
 
 Frames pass through FCEUX's own CPU video filters inside each helper (`--filter`, or the Video Filter setting): `none` (raw 256×240), the blargg NTSC family (`ntsc-composite`, `ntsc-svideo`, `ntsc-rgb`, `ntsc-mono` at 602×480), `hq2x`/`hq3x`, and `scale2x`/`scale3x`. Filtered output is published at the filter's native size (up to 768×720) and scaled to the tile on the GPU.
 
@@ -42,26 +42,6 @@ open "dist/NES Wallpaper.app"
 The app lives in the menu bar (no Dock icon). Pick your ROM and movie folders in Settings…, and the wallpaper starts automatically each time the app launches after that. Turn on Launch at Login in Settings to have it start with your Mac (it registers with `SMAppService`, so it also appears under System Settings → General → Login Items). It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time. ROMs with no matching movie join the rotation too, playing their title or attract screen with no input (toggleable in Settings).
 
 Browse TASVideos… lists every current NES publication in FM2 format straight from the [tasvideos.org API](https://tasvideos.org/api) and downloads runs into your movies folder. Each row shows whether a matching ROM (by the checksum in the movie's header) is already in your ROM folder; new movies are picked up the next time the wallpaper starts.
-
-The app icon is generated from `Assets/nes-wallpaper-logo-concept.png` by `Scripts/make-icon.sh` (the source logo is never modified); the resulting `Assets/AppIcon.icns` is committed, so you only need to re-run the script if the logo changes.
-
-## Signing and distribution
-
-`make-app.sh` signs ad hoc by default, which is fine for the Mac that built it; other Macs will refuse to open the app without a right-click → Open. For a build any Mac will accept, sign with a Developer ID certificate and notarize:
-
-```sh
-# One-time setup:
-#  1. Create a "Developer ID Application" certificate
-#     (Xcode → Settings → Accounts → Manage Certificates → +)
-#  2. Store notarization credentials (app-specific password from account.apple.com):
-xcrun notarytool store-credentials nes-wallpaper \
-    --apple-id you@example.com --team-id TEAMID --password <app-specific-password>
-
-# Then, for each release:
-./Scripts/notarize.sh   # signs (hardened runtime), notarizes, staples, zips
-```
-
-The script auto-detects the Developer ID certificate in your keychain (override with `CODESIGN_IDENTITY`), submits with the `nes-wallpaper` keychain profile (override with `NOTARY_PROFILE`), and leaves a stapled app plus a distributable zip in `dist/`.
 
 ## Trying it
 

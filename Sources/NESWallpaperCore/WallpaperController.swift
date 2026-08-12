@@ -19,39 +19,49 @@ public struct TileSpec {
     }
 }
 
-/// Renders a columns x rows grid of NES tiles on a borderless window at
-/// desktop level (behind icons) on each requested screen. Each tile is a
-/// nes-helper child process read via shared memory.
 /// Routes one window's CADisplayLink callback to the controller.
 /// (CADisplayLink needs an @objc target, so this small NSObject stands in
-/// for the plain-Swift controller and also remembers which window fired.)
+/// for the plain-Swift controller and also remembers which window's
+/// renderer fired.)
 private final class DisplayLinkDriver: NSObject {
     weak var controller: WallpaperController?
-    let windowIndex: Int
+    let renderer: TileGridRenderer
 
-    init(controller: WallpaperController, windowIndex: Int) {
+    init(controller: WallpaperController, renderer: TileGridRenderer) {
         self.controller = controller
-        self.windowIndex = windowIndex
+        self.renderer = renderer
     }
 
     @objc func step(_ link: CADisplayLink) {
-        controller?.renderWindow(windowIndex)
+        controller?.render(on: renderer)
     }
 }
 
+/// Renders a columns x rows grid of NES tiles on a borderless window at
+/// desktop level (behind icons) on every attached display. Each tile is a
+/// nes-helper child process read via shared memory; all displays mirror the
+/// same grid, so extra displays cost texture uploads and draws, not extra
+/// emulator processes. Windows follow displays as they attach and detach.
 public final class WallpaperController {
+    /// Everything tied to one display's wallpaper window, so displays can be
+    /// added and removed as a unit on hot-plug.
+    private struct ScreenSlot {
+        let window: NSWindow
+        let screenNumber: NSNumber?
+        let renderer: TileGridRenderer
+        let displayLink: CADisplayLink
+        let driver: DisplayLinkDriver
+        let occlusionObserver: NSObjectProtocol
+    }
+
     private let columns: Int
     private let rows: Int
     private let filter: VideoFilter
     private let helper: URL
     private let tileSource: () -> TileSpec
-    private var windows: [NSWindow] = []
-    private var screenNumbers: [NSNumber?] = [] // per window, for relayout
-    private var tiles: [TileProcess] = []       // parallel to renderers' slots
+    private var slots: [ScreenSlot] = []
+    private var tiles: [TileProcess] = []
     private let context: MetalContext
-    private var renderers: [TileGridRenderer] = [] // one per window
-    private var displayLinks: [CADisplayLink] = []
-    private var linkDrivers: [DisplayLinkDriver] = []
     private var rotationTimer: Timer?
     private var rotationIndex = 0 // next tile to rotate, round-robin
     private var shmCounter = 0    // fresh shm name for every spawned helper
@@ -70,9 +80,9 @@ public final class WallpaperController {
 
     /// Adapts a fixed rom/movie list to a cycling tile source, no rotation.
     public convenience init(pairs: [(rom: String, movie: String?)], columns: Int, rows: Int,
-                            screens: [NSScreen], filter: VideoFilter = .none) throws {
+                            filter: VideoFilter = .none) throws {
         guard !pairs.isEmpty else {
-            throw WallpaperError("need at least one rom, one screen, and a positive grid")
+            throw WallpaperError("need at least one rom and a positive grid")
         }
         var index = 0
         try self.init(
@@ -81,7 +91,7 @@ public final class WallpaperController {
                 let pair = pairs[index % pairs.count]
                 return TileSpec(rom: pair.rom, movie: pair.movie, startFrame: 0)
             },
-            rotationInterval: nil, columns: columns, rows: rows, screens: screens,
+            rotationInterval: nil, columns: columns, rows: rows,
             filter: filter)
     }
 
@@ -90,10 +100,9 @@ public final class WallpaperController {
     /// rotationInterval / tileCount seconds, round-robin, so tiles change on
     /// a stagger rather than all at once.
     public init(tileSource: @escaping () -> TileSpec, rotationInterval: TimeInterval?,
-                columns: Int, rows: Int, screens: [NSScreen],
-                filter: VideoFilter = .none) throws {
-        guard columns > 0, rows > 0, !screens.isEmpty else {
-            throw WallpaperError("need at least one rom, one screen, and a positive grid")
+                columns: Int, rows: Int, filter: VideoFilter = .none) throws {
+        guard columns > 0, rows > 0 else {
+            throw WallpaperError("need at least one rom and a positive grid")
         }
         self.columns = columns
         self.rows = rows
@@ -103,27 +112,11 @@ public final class WallpaperController {
         helper = try Self.findHelper()
         context = try MetalContext()
 
-        // Spawn every helper first, then open their segments: startup
-        // (ROM load, shm create) overlaps across processes.
-        let (tileWidth, tileHeight) = filter.outputSize
-        for screen in screens {
-            let window = Self.makeDesktopWindow(frame: screen.frame)
-            let content = WallpaperMetalView(
-                frame: NSRect(origin: .zero, size: screen.frame.size),
-                device: context.device)
-            window.contentView = content
-
-            for _ in 0..<(columns * rows) {
-                tiles.append(try spawnTile(tileSource()))
-            }
-            renderers.append(try TileGridRenderer(
-                context: context, view: content, columns: columns, rows: rows,
-                tileWidth: tileWidth, tileHeight: tileHeight))
-
-            windows.append(window)
-            screenNumbers.append(
-                screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
-            window.orderFront(nil)
+        // One grid of helpers total, shared by every display. Spawn them all
+        // first, then open their segments: startup (ROM load, shm create)
+        // overlaps across processes.
+        for _ in 0..<(columns * rows) {
+            tiles.append(try spawnTile(tileSource()))
         }
 
         for tile in tiles {
@@ -139,16 +132,8 @@ public final class WallpaperController {
             }
         }
 
-        // One display link per window: each runs at its display's native
-        // cadence. Uploads are gated on frame_count, so a 120 Hz ProMotion
-        // display costs extra draws but no extra texture uploads.
-        for (windowIndex, window) in windows.enumerated() {
-            guard let content = window.contentView else { continue }
-            let driver = DisplayLinkDriver(controller: self, windowIndex: windowIndex)
-            let link = content.displayLink(target: driver, selector: #selector(DisplayLinkDriver.step(_:)))
-            link.add(to: .main, forMode: .common)
-            linkDrivers.append(driver)
-            displayLinks.append(link)
+        for screen in NSScreen.screens {
+            try addSlot(for: screen)
         }
 
         if let rotationInterval, rotationInterval > 0, !tiles.isEmpty {
@@ -183,22 +168,60 @@ public final class WallpaperController {
             self?.screenLocked = false
             self?.updatePauseState()
         })
-        for window in windows {
-            pauseObservers.append(NotificationCenter.default.addObserver(
-                forName: NSWindow.didChangeOcclusionStateNotification,
-                object: window, queue: .main) { [weak self] _ in
-                // Occlusion flaps during window ordering; settle before acting.
-                self?.occlusionDebounce?.cancel()
-                let work = DispatchWorkItem { self?.updatePauseState() }
-                self?.occlusionDebounce = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
-            })
+    }
+
+    /// Window, renderer, and display link for one display. Each link runs at
+    /// its display's native cadence; uploads are gated on frame_count, so a
+    /// 120 Hz ProMotion display costs extra draws but no extra texture
+    /// uploads.
+    private func addSlot(for screen: NSScreen) throws {
+        let window = Self.makeDesktopWindow(frame: screen.frame)
+        let content = WallpaperMetalView(
+            frame: NSRect(origin: .zero, size: screen.frame.size),
+            device: context.device)
+        window.contentView = content
+
+        let (tileWidth, tileHeight) = filter.outputSize
+        let renderer = try TileGridRenderer(
+            context: context, view: content, columns: columns, rows: rows,
+            tileWidth: tileWidth, tileHeight: tileHeight)
+        window.orderFront(nil)
+
+        let driver = DisplayLinkDriver(controller: self, renderer: renderer)
+        let link = content.displayLink(target: driver, selector: #selector(DisplayLinkDriver.step(_:)))
+        link.isPaused = emulationPaused
+        link.add(to: .main, forMode: .common)
+
+        let occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window, queue: .main) { [weak self] _ in
+            // Occlusion flaps during window ordering; settle before acting.
+            self?.occlusionDebounce?.cancel()
+            let work = DispatchWorkItem { self?.updatePauseState() }
+            self?.occlusionDebounce = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
         }
+
+        slots.append(ScreenSlot(
+            window: window,
+            screenNumber: screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+            renderer: renderer,
+            displayLink: link,
+            driver: driver,
+            occlusionObserver: occlusionObserver))
+    }
+
+    private func removeSlot(_ slot: ScreenSlot) {
+        slot.displayLink.invalidate()
+        NotificationCenter.default.removeObserver(slot.occlusionObserver)
+        slot.window.orderOut(nil)
     }
 
     private func updatePauseState() {
-        let allOccluded = !windows.isEmpty && windows.allSatisfy {
-            !$0.occlusionState.contains(.visible)
+        // allSatisfy is vacuously true with no displays attached: nobody can
+        // see anything, so that counts as occluded too.
+        let allOccluded = slots.allSatisfy {
+            !$0.window.occlusionState.contains(.visible)
         }
         let shouldPause = userPaused || screenLocked || allOccluded
         guard shouldPause != emulationPaused else { return }
@@ -210,13 +233,12 @@ public final class WallpaperController {
             shouldPause ? tile.pause() : tile.resume()
         }
         // Emulators stop via stdin; the links stop the app's GPU work too.
-        for link in displayLinks { link.isPaused = shouldPause }
+        for slot in slots { slot.displayLink.isPaused = shouldPause }
     }
 
     public func shutdown() {
-        for link in displayLinks { link.invalidate() }
-        displayLinks.removeAll()
-        linkDrivers.removeAll()
+        for slot in slots { removeSlot(slot) }
+        slots.removeAll()
         rotationTimer?.invalidate()
         rotationTimer = nil
         if let observer {
@@ -224,13 +246,11 @@ public final class WallpaperController {
             self.observer = nil
         }
         for pauseObserver in pauseObservers {
-            NotificationCenter.default.removeObserver(pauseObserver)
             DistributedNotificationCenter.default().removeObserver(pauseObserver)
         }
         pauseObservers.removeAll()
         for tile in tiles { tile.terminate() }
         tiles.removeAll()
-        for window in windows { window.orderOut(nil) }
     }
 
     deinit { shutdown() }
@@ -296,10 +316,7 @@ public final class WallpaperController {
                 self.tiles[index] = replacement
                 // The replacement restarts frame_count; force a re-upload so
                 // a coincidental match can't leave the old game on screen.
-                let tilesPerWindow = self.columns * self.rows
-                if index / tilesPerWindow < self.renderers.count {
-                    self.renderers[index / tilesPerWindow].invalidateTile(index % tilesPerWindow)
-                }
+                for slot in self.slots { slot.renderer.invalidateTile(index) }
                 // Pause may have flipped while the replacement was starting.
                 if self.emulationPaused { replacement.pause() }
             }
@@ -311,24 +328,36 @@ public final class WallpaperController {
     }
 
     /// Display-link callback for one window: upload changed tiles, draw.
-    fileprivate func renderWindow(_ windowIndex: Int) {
-        guard windowIndex < renderers.count else { return }
-        let base = windowIndex * columns * rows
-        renderers[windowIndex].draw(tiles: tiles, range: base..<(base + columns * rows))
+    /// Every window draws the whole tile array — displays mirror each other.
+    fileprivate func render(on renderer: TileGridRenderer) {
+        renderer.draw(tiles: tiles, range: 0..<tiles.count)
     }
 
+    /// Reconcile windows with the attached displays: resize survivors, drop
+    /// windows whose display is gone, add windows for new displays.
     private func screensChanged() {
-        for (index, window) in windows.enumerated() {
-            let match = NSScreen.screens.first {
-                ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
-                    == screenNumbers[index]
+        var departed = slots
+        slots.removeAll()
+        for screen in NSScreen.screens {
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            if let index = departed.firstIndex(where: { $0.screenNumber == number }) {
+                let slot = departed.remove(at: index)
+                slot.window.setFrame(screen.frame, display: true)
+                slot.window.contentView?.frame = NSRect(origin: .zero, size: screen.frame.size)
+                // The view's layout pass resizes the drawable; tile geometry
+                // is recomputed from drawableSize on every draw.
+                slots.append(slot)
+            } else {
+                do {
+                    try addSlot(for: screen)
+                } catch {
+                    Self.log("failed to add wallpaper window for new display: \(error)")
+                }
             }
-            guard let screen = match ?? NSScreen.main else { continue }
-            window.setFrame(screen.frame, display: true)
-            window.contentView?.frame = NSRect(origin: .zero, size: screen.frame.size)
-            // The view's layout pass resizes the drawable; tile geometry is
-            // recomputed from drawableSize on every draw.
         }
+        for slot in departed { removeSlot(slot) }
+        // Displays coming or going changes what "all occluded" means.
+        updatePauseState()
     }
 
     private static func makeDesktopWindow(frame: NSRect) -> NSWindow {

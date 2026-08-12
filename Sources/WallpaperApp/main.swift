@@ -105,15 +105,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menuBar = MenuBarController()
             return
         }
-        guard let screen = NSScreen.main else {
-            FileHandle.standardError.write(Data("nes-wallpaper: no screen\n".utf8))
-            exit(1)
-        }
         do {
             controller = try WallpaperController(
                 tileSource: makeTileSource(),
                 rotationInterval: rotationInterval,
-                columns: columns, rows: rows, screens: [screen],
+                columns: columns, rows: rows,
                 filter: videoFilter)
         } catch {
             FileHandle.standardError.write(Data("nes-wallpaper: \(error)\n".utf8))
