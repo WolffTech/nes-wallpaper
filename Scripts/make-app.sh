@@ -9,6 +9,7 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 APP_NAME="NES Wallpaper"
 DIST_DIR="$REPO_ROOT/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
+ICNS="$REPO_ROOT/Assets/AppIcon.icns"
 
 echo "==> Building (release)"
 swift build --package-path "$REPO_ROOT" -c release
@@ -36,6 +37,12 @@ cp "$MAIN_BIN" "$APP_DIR/Contents/MacOS/NESWallpaper"
 cp "$HELPER_BIN" "$APP_DIR/Contents/MacOS/nes-helper"
 cp "$SCRIPT_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
 printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
+
+if [[ ! -f "$ICNS" ]]; then
+    "$SCRIPT_DIR/make-icon.sh"
+fi
+mkdir -p "$APP_DIR/Contents/Resources"
+cp "$ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 echo "==> Codesigning (ad hoc)"
 # Sign the nested helper explicitly first (standalone binary), then the app.
