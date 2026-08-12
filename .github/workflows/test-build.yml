@@ -1,0 +1,60 @@
+name: Test Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build downloadable test app
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Assemble ad-hoc signed app
+        run: ./Scripts/make-app.sh
+
+      - name: Run emulator smoke test
+        run: |
+          BIN_PATH="$(swift build -c release --show-bin-path)"
+          FRAME_DIR="$RUNNER_TEMP/nes-wallpaper-frames"
+          "$BIN_PATH/nes-headless" \
+            TestData/nestest.nes \
+            --frames 60 \
+            --dump-every 60 \
+            --out "$FRAME_DIR"
+          test -n "$(find "$FRAME_DIR" -name '*.png' -print -quit)"
+
+      - name: Verify app bundle
+        run: |
+          APP_PATH="dist/NES Wallpaper.app"
+          test -x "$APP_PATH/Contents/MacOS/NESWallpaper"
+          test -x "$APP_PATH/Contents/MacOS/nes-helper"
+          codesign --verify --strict --deep "$APP_PATH"
+
+      - name: Create download archive
+        run: |
+          ditto -c -k --keepParent \
+            "dist/NES Wallpaper.app" \
+            "dist/NES-Wallpaper-test-build.zip"
+
+      - name: Upload test build
+        uses: actions/upload-artifact@v7
+        with:
+          name: NES-Wallpaper-arm64-${{ github.run_number }}
+          path: dist/NES-Wallpaper-test-build.zip
+          if-no-files-found: error
+          retention-days: 14
