@@ -1,8 +1,8 @@
 import AppKit
 import CShm
 
-/// One wallpaper tile: a nes-helper child process publishing frames into
-/// POSIX shared memory, plus the app-side reader for that segment.
+/// One wallpaper tile: a nes-helper child process publishing frames into a
+/// shared frame file (see SharedFrames), plus the app-side reader for it.
 public final class TileProcess {
     public let shmName: String
 

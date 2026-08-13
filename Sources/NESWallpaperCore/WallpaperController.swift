@@ -142,6 +142,7 @@ public final class WallpaperController {
 
         helper = try Self.findHelper()
         context = try MetalContext()
+        try SharedFrames.prepareTilesDirectory()
 
         // One grid of helpers total, shared by every display. Spawn them all
         // first, then open their segments: startup (ROM load, shm create)
@@ -295,11 +296,10 @@ public final class WallpaperController {
 
     deinit { shutdown() }
 
-    /// Every spawned helper gets a fresh shm name so a replacement never
-    /// collides with the tile it is replacing. Names stay under the macOS
-    /// 31-char PSHMNAMLEN cap.
+    /// Every spawned helper gets a fresh frame-file path so a replacement
+    /// never collides with the tile it is replacing.
     private func spawnTile(_ spec: TileSpec) throws -> TileProcess {
-        let shmName = "/nes.\(getpid()).\(shmCounter)"
+        let shmName = SharedFrames.tileURL(pid: getpid(), counter: shmCounter).path
         shmCounter += 1
         return try TileProcess(
             helper: helper, shmName: shmName, rom: spec.rom, movie: spec.movie,

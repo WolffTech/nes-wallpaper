@@ -9,7 +9,10 @@ extern "C" {
 #endif
 
 /* Shared-memory frame transport between a nes-helper emulator process
-   (writer) and the wallpaper app (reader).
+   (writer) and its readers: the wallpaper app, and the screensaver
+   plugin. The segment is a plain mmapped file (not POSIX shm) so the
+   sandboxed screensaver can open it read-only; any number of concurrent
+   read-only mappings is fine.
 
    Double-buffered: the writer fills buffer `back`, then publishes it by
    storing the buffer index into `front` (release). The reader loads
@@ -66,13 +69,15 @@ static inline uint8_t *nes_shm_pixels(nes_shm_t *shm, uint32_t idx) {
     return (uint8_t *)(shm + 1) + (size_t)idx * nes_shm_pix_bytes(shm->width, shm->height);
 }
 
-/* Create (writer) or open (reader) a mapping. Names must start with '/'
-   and stay under 31 chars (macOS PSHMNAMLEN), e.g. "/nes.12345.0".
-   Returns NULL on failure. The creator unlinks the name on nes_shm_close,
-   so the segment disappears when both sides unmap. */
-nes_shm_t *nes_shm_create(const char *name, uint32_t width, uint32_t height);
-nes_shm_t *nes_shm_open(const char *name);
-void nes_shm_close(nes_shm_t *shm, const char *name, int is_creator);
+/* Create (writer) or open (reader) a mapping. Names are filesystem
+   paths in a directory that already exists, e.g.
+   "/Users/Shared/NESWallpaper/tiles/nes.12345.0.frame". The writer maps
+   read-write; nes_shm_open maps read-only. Returns NULL on failure. The
+   creator unlinks the file on nes_shm_close; existing mappings (and the
+   pages behind them) survive until every side unmaps. */
+nes_shm_t *nes_shm_create(const char *path, uint32_t width, uint32_t height);
+nes_shm_t *nes_shm_open(const char *path);
+void nes_shm_close(nes_shm_t *shm, const char *path, int is_creator);
 
 #ifdef __cplusplus
 }
