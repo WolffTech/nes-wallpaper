@@ -63,7 +63,7 @@ int fceux_init(const char *base_dir) {
 		return 0;
 	FCEUI_SetBaseDirectory(base_dir ? base_dir : "/tmp");
 	FCEUI_SetVidSystem(0); // NTSC
-	FCEUI_Sound(44100);
+	FCEUI_Sound(0);
 	FCEUI_SetInput(0, SI_GAMEPAD, &s_joypad_data, 0);
 	FCEUI_SetInput(1, SI_GAMEPAD, &s_joypad_data, 0);
 	FCEUI_SetInputFC(SIFC_NONE, nullptr, 0);
