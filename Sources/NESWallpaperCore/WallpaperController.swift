@@ -317,6 +317,8 @@ public final class WallpaperController {
     private func writeManifest() {
         let manifest = SharedFrames.Manifest(
             pid: getpid(), columns: columns, rows: rows,
+            tileWidth: filter.outputSize.width,
+            tileHeight: filter.outputSize.height,
             tiles: tiles.map(\.shmName))
         do {
             try SharedFrames.write(manifest)

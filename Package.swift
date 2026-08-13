@@ -4,6 +4,11 @@ import PackageDescription
 let package = Package(
     name: "NESWallpaper",
     platforms: [.macOS(.v14)],
+    products: [
+        // Loadable code for the .saver bundle; Scripts/make-app.sh wraps
+        // this dylib in the bundle structure legacyScreenSaver expects.
+        .library(name: "NESWallpaperSaver", type: .dynamic, targets: ["SaverPlugin"]),
+    ],
     targets: [
         // FCEUX core (vendored, see vendor/VENDOR.md) plus a C shim.
         .target(
@@ -65,6 +70,15 @@ let package = Package(
             name: "nes-wallpaper",
             dependencies: ["NESWallpaperCore", "CShm", "CFCEUX"],
             path: "Sources/WallpaperApp"
+        ),
+        // Screensaver plugin: read-only client of the app's frame files.
+        .target(
+            name: "SaverPlugin",
+            dependencies: ["NESWallpaperCore", "CShm"],
+            path: "Sources/SaverPlugin",
+            linkerSettings: [
+                .linkedFramework("ScreenSaver"),
+            ]
         ),
         .testTarget(
             name: "NESWallpaperCoreTests",

@@ -22,7 +22,7 @@ final class SharedFramesTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
 
         let manifest = SharedFrames.Manifest(
-            pid: 4242, columns: 3, rows: 2,
+            pid: 4242, columns: 3, rows: 2, tileWidth: 256, tileHeight: 240,
             tiles: ["/a.frame", "/b.frame"])
         try SharedFrames.write(manifest, to: url)
         XCTAssertEqual(SharedFrames.readManifest(from: url), manifest)

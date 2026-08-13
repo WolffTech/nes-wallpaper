@@ -52,13 +52,20 @@ public enum SharedFrames {
         public let pid: Int32
         public let columns: Int
         public let rows: Int
+        /// Frame size shared by every tile this run (fixed per video filter),
+        /// so a reader can size its textures before any tile file is mapped.
+        public let tileWidth: Int
+        public let tileHeight: Int
         public let tiles: [String]
 
-        public init(pid: Int32, columns: Int, rows: Int, tiles: [String]) {
+        public init(pid: Int32, columns: Int, rows: Int,
+                    tileWidth: Int, tileHeight: Int, tiles: [String]) {
             self.version = 1
             self.pid = pid
             self.columns = columns
             self.rows = rows
+            self.tileWidth = tileWidth
+            self.tileHeight = tileHeight
             self.tiles = tiles
         }
     }
