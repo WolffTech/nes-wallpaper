@@ -99,6 +99,11 @@ public final class WallpaperController {
     private var screenLocked = false
     private var emulationPaused = false
     private var occlusionDebounce: DispatchWorkItem?
+    /// True while the screensaver plugin's heartbeat is fresh: the saver is
+    /// on screen reading our frame files, so emulation must keep running
+    /// even though the wallpaper itself is covered or the screen is locked.
+    private var saverWatching = false
+    private var heartbeatTimer: Timer?
 
     /// Set by the UI to suspend emulation; combined with automatic pause
     /// (screen locked, all wallpaper windows occluded) in updatePauseState.
@@ -170,6 +175,8 @@ public final class WallpaperController {
                 tile.terminate()
             }
         }
+
+        writeManifest()
 
         for screen in NSScreen.screens {
             try addSlot(for: screen)
@@ -262,17 +269,60 @@ public final class WallpaperController {
         let allOccluded = slots.allSatisfy {
             !$0.window.occlusionState.contains(.visible)
         }
-        let shouldPause = userPaused || screenLocked || allOccluded
+        // The wallpaper being invisible only matters while the saver isn't
+        // showing our frames instead. Watch for its heartbeat exactly when
+        // invisibility would otherwise pause us.
+        updateHeartbeatPolling(wanted: screenLocked || allOccluded)
+        let shouldPause = userPaused
+            || ((screenLocked || allOccluded) && !saverWatching)
+        // Links are per-window: never draw to an invisible window, even
+        // while emulation runs on for the saver's benefit.
+        for slot in slots {
+            slot.displayLink.isPaused = shouldPause
+                || !slot.window.occlusionState.contains(.visible)
+        }
         guard shouldPause != emulationPaused else { return }
         emulationPaused = shouldPause
         Self.log(shouldPause
             ? "pausing emulation (user=\(userPaused) locked=\(screenLocked) occluded=\(allOccluded))"
-            : "resuming emulation")
+            : "resuming emulation\(saverWatching ? " (screensaver watching)" : "")")
         for tile in tiles {
             shouldPause ? tile.pause() : tile.resume()
         }
-        // Emulators stop via stdin; the links stop the app's GPU work too.
-        for slot in slots { slot.displayLink.isPaused = shouldPause }
+    }
+
+    /// Poll the saver's heartbeat while the wallpaper is invisible; stop
+    /// (and forget the saver) as soon as it is visible again.
+    private func updateHeartbeatPolling(wanted: Bool) {
+        if wanted, heartbeatTimer == nil {
+            saverWatching = SharedFrames.heartbeatFresh(at: SharedFrames.appSideHeartbeatURL)
+            let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                let fresh = SharedFrames.heartbeatFresh(at: SharedFrames.appSideHeartbeatURL)
+                if fresh != self.saverWatching {
+                    self.saverWatching = fresh
+                    self.updatePauseState()
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            heartbeatTimer = timer
+        } else if !wanted, heartbeatTimer != nil {
+            heartbeatTimer?.invalidate()
+            heartbeatTimer = nil
+            saverWatching = false
+        }
+    }
+
+    /// Republish the manifest whenever the set of frame files changes.
+    private func writeManifest() {
+        let manifest = SharedFrames.Manifest(
+            pid: getpid(), columns: columns, rows: rows,
+            tiles: tiles.map(\.shmName))
+        do {
+            try SharedFrames.write(manifest)
+        } catch {
+            Self.log("failed to write saver manifest: \(error)")
+        }
     }
 
     public func shutdown() {
@@ -288,6 +338,11 @@ public final class WallpaperController {
             DistributedNotificationCenter.default().removeObserver(pauseObserver)
         }
         pauseObservers.removeAll()
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+        // A manifest with no live app behind it would leave the saver
+        // showing black tiles; better for it to say "wallpaper not running".
+        try? FileManager.default.removeItem(at: SharedFrames.manifestURL)
         for tile in tiles { tile.terminate() }
         tiles.removeAll()
         tileSpecs.removeAll()
@@ -368,6 +423,7 @@ public final class WallpaperController {
                 self.tiles[index].terminate()
                 self.tiles[index] = replacement
                 self.tileSpecs[index] = spec
+                self.writeManifest()
                 // The replacement restarts frame_count; force a re-upload so
                 // a coincidental match can't leave the old game on screen.
                 for slot in self.slots { slot.renderer.invalidateTile(index) }
