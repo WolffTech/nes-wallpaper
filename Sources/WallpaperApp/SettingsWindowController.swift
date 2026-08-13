@@ -119,89 +119,43 @@ final class SaverInstallModel: ObservableObject {
     }
 }
 
+/// Panes of the settings window. Splitting the form across tabs keeps every
+/// pane short enough to fit without scrolling at the window's fixed size.
+enum SettingsTab: Hashable {
+    case library, display, general
+}
+
+/// Selected tab. An ObservableObject rather than `@State` so the app still
+/// builds with the Command Line Tools toolchain, which has no SwiftUI macro
+/// plugin (`@State` is a macro; `@Published`/`@ObservedObject` are not).
+final class SettingsTabModel: ObservableObject {
+    @Published var tab = SettingsTab.library
+}
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject var loginItem: LoginItemModel
     @ObservedObject var saverInstall: SaverInstallModel
+    @ObservedObject var tabModel: SettingsTabModel
 
+    // Header strip, pane, footer strip. A TabView would nest its own bordered
+    // panel inside the window, leaving three competing background shades; the
+    // segmented picker keeps the pane flush so the window reads as one surface.
     var body: some View {
         VStack(spacing: 0) {
-            Form {
-                Section {
-                    folderRow(title: "ROM Folder", path: model.romsDir) {
-                        model.romsDir = $0
-                    }
-                    folderRow(title: "Movies Folder", path: model.moviesDir) {
-                        model.moviesDir = $0
-                    }
-                    Toggle("Include games without movies",
-                           isOn: $model.includeROMsWithoutMovies)
-                } footer: {
-                    Text("Movies (.fm2) are matched to ROMs (.nes) by the checksum in their header. Games without a matching movie play their title or attract screen.")
-                }
-                Section {
-                    Picker("Columns", selection: $model.columns) {
-                        ForEach(1..<9, id: \.self) { Text("\($0)").tag($0) }
-                    }
-                    Picker("Rows", selection: $model.rows) {
-                        ForEach(1..<7, id: \.self) { Text("\($0)").tag($0) }
-                    }
-                }
-                Section {
-                    Picker("Video Filter", selection: $model.videoFilter) {
-                        ForEach(VideoFilter.allCases, id: \.self) {
-                            Text($0.displayName).tag($0)
-                        }
-                    }
-                } footer: {
-                    Text("CRT and smoothing filters, rendered per tile by the emulator.")
-                }
-                Section {
-                    LabeledContent("Rotate Every") {
-                        TextField("Minutes", value: $model.rotationMinutes, format: .number)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 50)
-                            .labelsHidden()
-                        Stepper("Minutes", value: $model.rotationMinutes, in: 0...1440)
-                            .labelsHidden()
-                    }
-                } footer: {
-                    Text("Minutes between tile shuffles. 0 means never rotate.")
-                }
-                Section {
-                    Toggle("Launch at Login", isOn: Binding(
-                        get: { loginItem.enabled },
-                        set: { loginItem.set($0) }))
-                        .disabled(!loginItem.available)
-                } footer: {
-                    if !loginItem.available {
-                        Text("Available when running the installed app (see Scripts/make-app.sh).")
-                    } else if let error = loginItem.lastError {
-                        Text(error).foregroundStyle(.red)
-                    } else {
-                        Text("Takes effect immediately; no need to press Apply.")
-                    }
-                }
-                Section {
-                    LabeledContent("Screen Saver") {
-                        Button(saverInstall.installed
-                            ? "Reinstall Screen Saver…" : "Install Screen Saver…") {
-                            saverInstall.install()
-                        }
-                        .disabled(!saverInstall.available)
-                    }
-                } footer: {
-                    if !saverInstall.available {
-                        Text("Available when running the installed app (see Scripts/make-app.sh).")
-                    } else if let error = saverInstall.lastError {
-                        Text(error).foregroundStyle(.red)
-                    } else {
-                        Text("Shows the wallpaper as your screen saver, including on the lock screen. After installing, pick \u{201C}NES Wallpaper\u{201D} in System Settings under Wallpaper \u{2192} Screen Saver, and set the app to launch at login so frames keep coming.")
-                    }
-                }
+            Picker("Section", selection: $tabModel.tab) {
+                Text("Library").tag(SettingsTab.library)
+                Text("Display").tag(SettingsTab.display)
+                Text("General").tag(SettingsTab.general)
             }
-            .formStyle(.grouped)
-            .scrollDisabled(true) // everything fits; never show a scroll bar
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 300)
+            .padding(12)
+
+            Divider()
+            selectedPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
             HStack {
@@ -214,7 +168,118 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(width: 480, height: 730)
+        .frame(width: 520, height: 440)
+    }
+
+    @ViewBuilder private var selectedPane: some View {
+        switch tabModel.tab {
+        case .library: libraryTab
+        case .display: displayTab
+        case .general: generalTab
+        }
+    }
+
+    private var libraryTab: some View {
+        Form {
+            Section {
+                folderRow(title: "ROM Folder", path: model.romsDir) {
+                    model.romsDir = $0
+                }
+                folderRow(title: "Movies Folder", path: model.moviesDir) {
+                    model.moviesDir = $0
+                }
+                Toggle("Include games without movies",
+                       isOn: $model.includeROMsWithoutMovies)
+            } footer: {
+                note(Text("Movies (.fm2) are matched to ROMs (.nes) by the checksum in their header. Games without a matching movie play their title or attract screen."))
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var displayTab: some View {
+        Form {
+            Section {
+                Picker("Columns", selection: $model.columns) {
+                    ForEach(1..<9, id: \.self) { Text("\($0)").tag($0) }
+                }
+                Picker("Rows", selection: $model.rows) {
+                    ForEach(1..<7, id: \.self) { Text("\($0)").tag($0) }
+                }
+            } footer: {
+                note(Text("Tiles are laid out in this grid on every display."))
+            }
+            Section {
+                Picker("Video Filter", selection: $model.videoFilter) {
+                    ForEach(VideoFilter.allCases, id: \.self) {
+                        Text($0.displayName).tag($0)
+                    }
+                }
+            } footer: {
+                note(Text("CRT and smoothing filters, rendered per tile by the emulator."))
+            }
+            Section {
+                LabeledContent("Rotate Every") {
+                    TextField("Minutes", value: $model.rotationMinutes, format: .number)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 50)
+                        .labelsHidden()
+                    Stepper("Minutes", value: $model.rotationMinutes, in: 0...1440)
+                        .labelsHidden()
+                }
+            } footer: {
+                note(Text("Minutes between tile shuffles. 0 means never rotate."))
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var generalTab: some View {
+        Form {
+            Section {
+                Toggle("Launch at Login", isOn: Binding(
+                    get: { loginItem.enabled },
+                    set: { loginItem.set($0) }))
+                    .disabled(!loginItem.available)
+            } footer: {
+                if !loginItem.available {
+                    note(Text("Available when running the installed app (see Scripts/make-app.sh)."))
+                } else if let error = loginItem.lastError {
+                    note(Text(error).foregroundStyle(.red))
+                } else {
+                    note(Text("Takes effect immediately; no need to press Apply."))
+                }
+            }
+            Section {
+                LabeledContent {
+                    Button(saverInstall.installed
+                        ? "Reinstall\u{2026}" : "Install\u{2026}") {
+                        saverInstall.install()
+                    }
+                    .disabled(!saverInstall.available)
+                } label: {
+                    Text("Screen Saver")
+                    Text(saverInstall.installed ? "Installed" : "Not installed")
+                }
+            } footer: {
+                if !saverInstall.available {
+                    note(Text("Available when running the installed app (see Scripts/make-app.sh)."))
+                } else if let error = saverInstall.lastError {
+                    note(Text(error).foregroundStyle(.red))
+                } else {
+                    note(Text("Plays the wallpaper as your screen saver, including on the lock screen. After installing, pick \u{201C}NES Wallpaper\u{201D} in System Settings under Wallpaper \u{2192} Screen Saver. Frames only arrive while the app is running, so turn on Launch at Login."))
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// Section footers default to trailing alignment inside a grouped form's
+    /// LabeledContent rows; explanatory text reads better flush left.
+    private func note(_ text: Text) -> some View {
+        text
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func folderRow(title: String, path: String?,
@@ -254,6 +319,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let model = SettingsModel()
     private let loginItem = LoginItemModel()
     private let saverInstall = SaverInstallModel()
+    private let tabModel = SettingsTabModel()
 
     init(menuBar: MenuBarController) {
         let window = NSWindow(
@@ -267,7 +333,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         model.onApply = { [weak menuBar] in menuBar?.settingsApplied() }
         window.contentViewController = NSHostingController(
             rootView: SettingsView(model: model, loginItem: loginItem,
-                                   saverInstall: saverInstall))
+                                   saverInstall: saverInstall, tabModel: tabModel))
         window.delegate = self
         model.load()
         loginItem.load()
