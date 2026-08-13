@@ -6,29 +6,31 @@
 #include <unistd.h>
 #include <string.h>
 
-static nes_shm_t *map_fd(int fd, size_t size) {
-    void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+static nes_shm_t *map_fd(int fd, size_t size, int prot) {
+    void *p = mmap(NULL, size, prot, MAP_SHARED, fd, 0);
     close(fd);
     return p == MAP_FAILED ? NULL : (nes_shm_t *)p;
 }
 
-nes_shm_t *nes_shm_create(const char *name, uint32_t width, uint32_t height) {
+nes_shm_t *nes_shm_create(const char *path, uint32_t width, uint32_t height) {
     if (width == 0 || width > NES_SHM_MAX_WIDTH ||
         height == 0 || height > NES_SHM_MAX_HEIGHT)
         return NULL;
     size_t size = nes_shm_total_size(width, height);
-    shm_unlink(name); /* clear any stale segment from a crashed helper */
-    int fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
+    unlink(path); /* clear any stale file from a crashed helper */
+    /* 0644: readers open the file read-only, and the screensaver plugin may
+       run as a different sandbox identity than the writer. */
+    int fd = open(path, O_CREAT | O_EXCL | O_RDWR, 0644);
     if (fd < 0)
         return NULL;
     if (ftruncate(fd, (off_t)size) != 0) {
         close(fd);
-        shm_unlink(name);
+        unlink(path);
         return NULL;
     }
-    nes_shm_t *shm = map_fd(fd, size);
+    nes_shm_t *shm = map_fd(fd, size, PROT_READ | PROT_WRITE);
     if (!shm) {
-        shm_unlink(name);
+        unlink(path);
         return NULL;
     }
     memset(shm, 0, size);
@@ -43,8 +45,10 @@ nes_shm_t *nes_shm_create(const char *name, uint32_t width, uint32_t height) {
     return shm;
 }
 
-nes_shm_t *nes_shm_open(const char *name) {
-    int fd = shm_open(name, O_RDWR, 0);
+nes_shm_t *nes_shm_open(const char *path) {
+    /* Read-only: readers never write, and the sandboxed screensaver reader
+       could not open the file for writing anyway. */
+    int fd = open(path, O_RDONLY);
     if (fd < 0)
         return NULL;
     struct stat st;
@@ -53,10 +57,11 @@ nes_shm_t *nes_shm_open(const char *name) {
         return NULL;
     }
     size_t mapped = (size_t)st.st_size;
-    nes_shm_t *shm = map_fd(fd, mapped);
+    nes_shm_t *shm = map_fd(fd, mapped, PROT_READ);
     if (!shm)
         return NULL;
-    /* >= not ==: shm ftruncate rounds the object up to a page multiple. */
+    /* >= not ==: accept a file larger than the header claims, refuse one
+       too small for its own dimensions. */
     if (__atomic_load_n(&shm->magic, __ATOMIC_ACQUIRE) != NES_SHM_MAGIC ||
         shm->version != NES_SHM_VERSION ||
         shm->width == 0 || shm->width > NES_SHM_MAX_WIDTH ||
@@ -69,9 +74,9 @@ nes_shm_t *nes_shm_open(const char *name) {
     return shm;
 }
 
-void nes_shm_close(nes_shm_t *shm, const char *name, int is_creator) {
+void nes_shm_close(nes_shm_t *shm, const char *path, int is_creator) {
     if (shm)
         munmap(shm, nes_shm_total_size(shm->width, shm->height));
-    if (is_creator && name)
-        shm_unlink(name);
+    if (is_creator && path)
+        unlink(path);
 }

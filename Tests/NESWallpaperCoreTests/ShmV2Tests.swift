@@ -7,12 +7,13 @@ final class ShmV2Tests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        // Unique per test run; must stay under the 31-char PSHMNAMLEN cap.
-        shmName = "/nes.test.\(getpid())"
+        // A regular file path: the transport is file-backed mmap so the
+        // sandboxed screensaver can read it. Tests stay in the temp dir.
+        shmName = NSTemporaryDirectory() + "nes.test.\(getpid()).frame"
     }
 
     override func tearDown() {
-        shm_unlink(shmName)
+        unlink(shmName)
         super.tearDown()
     }
 
@@ -44,6 +45,15 @@ final class ShmV2Tests: XCTestCase {
         let last = Int(nes_shm_pix_bytes(602, 480)) - 1
         nes_shm_pixels(writer, 1)[last] = 0xAB
         XCTAssertEqual(nes_shm_pixels(reader, 1)[last], 0xAB)
+    }
+
+    func testCreateFailsWhenDirectoryMissing() {
+        XCTAssertNil(nes_shm_create(
+            NSTemporaryDirectory() + "no-such-dir/nes.frame", 256, 240))
+    }
+
+    func testOpenFailsWhenFileMissing() {
+        XCTAssertNil(nes_shm_open(shmName))
     }
 
     func testCreateRejectsOversizedDimensions() {

@@ -2,11 +2,11 @@ import Foundation
 import CFCEUX
 import CShm
 
-// Usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>]
+// Usage: nes-helper --shm <frame-file-path> --rom <path> [--movie <path.fm2>]
 //        [--start-frame N] [--loop] [--filter <name>]
 //
-// Runs one FCEUX instance and publishes frames into a shared-memory segment
-// at NES NTSC rate. Quits on SIGTERM/SIGINT, stdin "quit"/EOF, or orphaning.
+// Runs one FCEUX instance and publishes frames into a shared frame file
+// (created here, mmapped by readers) at NES NTSC rate. Quits on SIGTERM/SIGINT, stdin "quit"/EOF, or orphaning.
 // --start-frame fast-forwards the movie (unpaced, render skipped) so the
 // tile starts mid-game, like the original saver's checkpoints.
 
@@ -54,7 +54,7 @@ while !args.isEmpty {
 }
 
 guard !badArgs, let shmName, let romPath, let filter = filterMap[filterName] else {
-    FileHandle.standardError.write("usage: nes-helper --shm /nes.<pid>.<idx> --rom <path> [--movie <path.fm2>] [--start-frame N] [--loop] [--filter \(filterMap.keys.sorted().joined(separator: "|"))]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: nes-helper --shm <frame-file-path> --rom <path> [--movie <path.fm2>] [--start-frame N] [--loop] [--filter \(filterMap.keys.sorted().joined(separator: "|"))]\n".data(using: .utf8)!)
     exit(2)
 }
 

@@ -73,9 +73,56 @@ final class LoginItemModel: ObservableObject {
     }
 }
 
+/// Installs the bundled screensaver into ~/Library/Screen Savers. Like the
+/// login item, this needs the installed .app (the bare SwiftPM executable
+/// has no Resources to copy from).
+final class SaverInstallModel: ObservableObject {
+    @Published var installed = false
+    @Published var lastError: String?
+
+    private static let bundled = Bundle.main
+        .url(forResource: "NES Wallpaper", withExtension: "saver")
+    private static let destination = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Screen Savers/NES Wallpaper.saver")
+
+    var available: Bool { Self.bundled != nil }
+
+    func load() {
+        installed = FileManager.default.fileExists(atPath: Self.destination.path)
+        lastError = nil
+    }
+
+    func install() {
+        guard let bundled = Self.bundled else { return }
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(
+                at: Self.destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            // Replace, not merge: stale Contents must never survive.
+            if fm.fileExists(atPath: Self.destination.path) {
+                try fm.removeItem(at: Self.destination)
+            }
+            try fm.copyItem(at: bundled, to: Self.destination)
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+        load()
+        // Land the user where the saver is selected. The ScreenSaver pane
+        // moved under Wallpaper in macOS 26; the old URL still resolves.
+        if lastError == nil, let url = URL(
+            string: "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject var loginItem: LoginItemModel
+    @ObservedObject var saverInstall: SaverInstallModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -135,6 +182,23 @@ struct SettingsView: View {
                         Text("Takes effect immediately; no need to press Apply.")
                     }
                 }
+                Section {
+                    LabeledContent("Screen Saver") {
+                        Button(saverInstall.installed
+                            ? "Reinstall Screen Saver…" : "Install Screen Saver…") {
+                            saverInstall.install()
+                        }
+                        .disabled(!saverInstall.available)
+                    }
+                } footer: {
+                    if !saverInstall.available {
+                        Text("Available when running the installed app (see Scripts/make-app.sh).")
+                    } else if let error = saverInstall.lastError {
+                        Text(error).foregroundStyle(.red)
+                    } else {
+                        Text("Shows the wallpaper as your screen saver, including on the lock screen. After installing, pick \u{201C}NES Wallpaper\u{201D} in System Settings under Wallpaper \u{2192} Screen Saver, and set the app to launch at login so frames keep coming.")
+                    }
+                }
             }
             .formStyle(.grouped)
             .scrollDisabled(true) // everything fits; never show a scroll bar
@@ -150,7 +214,7 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(width: 480, height: 600)
+        .frame(width: 480, height: 730)
     }
 
     private func folderRow(title: String, path: String?,
@@ -189,6 +253,7 @@ struct SettingsView: View {
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let model = SettingsModel()
     private let loginItem = LoginItemModel()
+    private let saverInstall = SaverInstallModel()
 
     init(menuBar: MenuBarController) {
         let window = NSWindow(
@@ -201,10 +266,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         model.onApply = { [weak menuBar] in menuBar?.settingsApplied() }
         window.contentViewController = NSHostingController(
-            rootView: SettingsView(model: model, loginItem: loginItem))
+            rootView: SettingsView(model: model, loginItem: loginItem,
+                                   saverInstall: saverInstall))
         window.delegate = self
         model.load()
         loginItem.load()
+        saverInstall.load()
         window.center()
     }
 
@@ -214,6 +281,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func show() {
         model.load()
         loginItem.load() // may have changed in System Settings meanwhile
+        saverInstall.load() // user may have deleted the installed saver
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }

@@ -1,9 +1,52 @@
 import AppKit
 import CShm
 
-/// One wallpaper tile: a nes-helper child process publishing frames into
-/// POSIX shared memory, plus the app-side reader for that segment.
-public final class TileProcess {
+/// Anything TileGridRenderer can pull frames from: the app's live helper
+/// processes, or the screensaver's read-only mappings of their frame files.
+public protocol TileFrameSource {
+    /// Frames published so far; the renderer skips the upload when unchanged.
+    var frameCount: UInt32 { get }
+    /// Runs body with the last completed buffer and its bytesPerRow,
+    /// returning the frame count sampled alongside it; nil while no
+    /// segment is mapped.
+    func withFrontBuffer<R>(_ body: (UnsafeRawPointer, _ bytesPerRow: Int) -> R)
+        -> (frameCount: UInt32, result: R)?
+}
+
+/// Read-only mapping of one tile's frame file, for readers outside the app
+/// (the screensaver plugin). The writer is not our child: the mapping just
+/// goes quiet when the helper dies, and the file vanishes for later opens.
+public final class MappedTile: TileFrameSource {
+    private let shm: UnsafeMutablePointer<nes_shm_t>
+    public let path: String
+
+    public init?(path: String) {
+        guard let shm = nes_shm_open(path) else { return nil }
+        self.shm = shm
+        self.path = path
+    }
+
+    deinit { nes_shm_close(shm, path, 0) }
+
+    public var frameCount: UInt32 { nes_shm_load(&shm.pointee.frame_count) }
+
+    public var frameSize: (width: Int, height: Int) {
+        (Int(shm.pointee.width), Int(shm.pointee.height))
+    }
+
+    public func withFrontBuffer<R>(_ body: (UnsafeRawPointer, _ bytesPerRow: Int) -> R)
+        -> (frameCount: UInt32, result: R)?
+    {
+        let count = nes_shm_load(&shm.pointee.frame_count)
+        let idx = nes_shm_load(&shm.pointee.front)
+        let result = body(nes_shm_pixels(shm, idx), Int(shm.pointee.pitch))
+        return (count, result)
+    }
+}
+
+/// One wallpaper tile: a nes-helper child process publishing frames into a
+/// shared frame file (see SharedFrames), plus the app-side reader for it.
+public final class TileProcess: TileFrameSource {
     public let shmName: String
 
     private let process: Process

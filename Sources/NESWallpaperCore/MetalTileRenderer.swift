@@ -33,13 +33,13 @@ fragment float4 tileFragment(VOut in [[stage_in]],
 """
 
 /// Device, queue, pipeline, and sampler shared by every window's renderer.
-final class MetalContext {
-    let device: MTLDevice
+public final class MetalContext {
+    public let device: MTLDevice
     let queue: MTLCommandQueue
     let pipeline: MTLRenderPipelineState
     let sampler: MTLSamplerState
 
-    init() throws {
+    public init() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw WallpaperError("no Metal device available")
         }
@@ -82,20 +82,20 @@ final class MetalContext {
 /// Layer-hosting view whose backing layer is a CAMetalLayer sized in device
 /// pixels — setting contentsScale/drawableSize here is what makes tiles
 /// Retina-sharp (the old CALayer path never set contentsScale).
-final class WallpaperMetalView: NSView {
+public final class WallpaperMetalView: NSView {
     private let device: MTLDevice
 
-    init(frame: NSRect, device: MTLDevice) {
+    public init(frame: NSRect, device: MTLDevice) {
         self.device = device
         super.init(frame: frame)
         wantsLayer = true
     }
 
-    required init?(coder: NSCoder) { fatalError("not used") }
+    public required init?(coder: NSCoder) { fatalError("not used") }
 
     var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
-    override func makeBackingLayer() -> CALayer {
+    public override func makeBackingLayer() -> CALayer {
         let layer = CAMetalLayer()
         layer.device = device
         layer.pixelFormat = .bgra8Unorm
@@ -105,12 +105,12 @@ final class WallpaperMetalView: NSView {
         return layer
     }
 
-    override func layout() {
+    public override func layout() {
         super.layout()
         updateDrawableSize()
     }
 
-    override func viewDidChangeBackingProperties() {
+    public override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         updateDrawableSize()
     }
@@ -128,7 +128,7 @@ final class WallpaperMetalView: NSView {
 /// Renders one window's columns x rows grid. Textures are keyed by tile
 /// slot index (rotation replaces the TileProcess in a slot, never the
 /// texture: the filter — and therefore the frame size — is fixed per run).
-final class TileGridRenderer {
+public final class TileGridRenderer {
     private let context: MetalContext
     private let metalLayer: CAMetalLayer
     private let columns: Int
@@ -136,7 +136,7 @@ final class TileGridRenderer {
     private let textures: [MTLTexture]
     private var lastUploaded: [UInt32?]
 
-    init(context: MetalContext, view: WallpaperMetalView,
+    public init(context: MetalContext, view: WallpaperMetalView,
          columns: Int, rows: Int, tileWidth: Int, tileHeight: Int) throws {
         self.context = context
         self.metalLayer = view.metalLayer
@@ -161,14 +161,14 @@ final class TileGridRenderer {
     /// Rotation swapped the helper in this slot: the new process restarts
     /// frame_count, which could coincidentally match the old value, so force
     /// the next draw to re-upload.
-    func invalidateTile(_ localIndex: Int) {
+    public func invalidateTile(_ localIndex: Int) {
         guard lastUploaded.indices.contains(localIndex) else { return }
         lastUploaded[localIndex] = nil
     }
 
     /// Upload changed tiles and draw the grid. `tiles` is the controller's
     /// full tile array; `range` selects this window's slice.
-    func draw(tiles: [TileProcess], range: Range<Int>) {
+    public func draw(tiles: [any TileFrameSource], range: Range<Int>) {
         // Upload pass, before acquiring a drawable: replaceRegion copies
         // synchronously from the mapped shm pointer, no intermediate buffer.
         for (local, index) in range.enumerated() {
