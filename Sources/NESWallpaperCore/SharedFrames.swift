@@ -56,16 +56,22 @@ public enum SharedFrames {
         /// so a reader can size its textures before any tile file is mapped.
         public let tileWidth: Int
         public let tileHeight: Int
+        /// Loopback UDP port of the app's HeartbeatListener; 0 when the
+        /// listener could not be created (saver then shows frozen frames
+        /// while the wallpaper is paused, but nothing breaks).
+        public let heartbeatPort: Int
         public let tiles: [String]
 
         public init(pid: Int32, columns: Int, rows: Int,
-                    tileWidth: Int, tileHeight: Int, tiles: [String]) {
+                    tileWidth: Int, tileHeight: Int,
+                    heartbeatPort: Int, tiles: [String]) {
             self.version = 1
             self.pid = pid
             self.columns = columns
             self.rows = rows
             self.tileWidth = tileWidth
             self.tileHeight = tileHeight
+            self.heartbeatPort = heartbeatPort
             self.tiles = tiles
         }
     }
@@ -85,35 +91,6 @@ public enum SharedFrames {
         return manifest
     }
 
-    // MARK: - Heartbeat (saver writes, app reads)
-
-    /// The saver can only write inside the legacyScreenSaver container, so
-    /// the heartbeat lives there. Both sides build the path from their own
-    /// notion of "home": for the sandboxed saver that already *is* the
-    /// container's Data directory, for the app it is grafted on below.
-    public static func heartbeatURL(home: URL) -> URL {
-        home.appendingPathComponent(
-            "Library/Application Support/NESWallpaper/heartbeat")
-    }
-
-    /// Where the app finds the saver's heartbeat.
-    public static var appSideHeartbeatURL: URL {
-        heartbeatURL(home: FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(
-                "Library/Containers/com.apple.ScreenSaver.Engine.legacyScreenSaver/Data",
-                isDirectory: true))
-    }
-
-    /// A heartbeat is fresh while its mtime is recent. The saver touches the
-    /// file about once a second; the generous window rides out scheduling
-    /// stalls without letting emulation run long after the saver is gone.
-    public static func heartbeatFresh(
-        at url: URL, now: Date = Date(), maxAge: TimeInterval = 4
-    ) -> Bool {
-        guard let mtime = (try? FileManager.default
-            .attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
-        else { return false }
-        // abs(): an mtime in the future is clock skew, not a live saver.
-        return abs(now.timeIntervalSince(mtime)) <= maxAge
-    }
+    // The saver-to-app heartbeat is a loopback UDP datagram, not a file:
+    // see HeartbeatListener for why.
 }

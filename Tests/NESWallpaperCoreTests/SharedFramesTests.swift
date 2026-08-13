@@ -23,7 +23,7 @@ final class SharedFramesTests: XCTestCase {
 
         let manifest = SharedFrames.Manifest(
             pid: 4242, columns: 3, rows: 2, tileWidth: 256, tileHeight: 240,
-            tiles: ["/a.frame", "/b.frame"])
+            heartbeatPort: 50000, tiles: ["/a.frame", "/b.frame"])
         try SharedFrames.write(manifest, to: url)
         XCTAssertEqual(SharedFrames.readManifest(from: url), manifest)
     }
@@ -38,28 +38,41 @@ final class SharedFramesTests: XCTestCase {
         XCTAssertNil(SharedFrames.readManifest(from: url))
     }
 
-    func testHeartbeatFreshness() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("heartbeat.\(getpid())")
-        defer { try? FileManager.default.removeItem(at: url) }
+    /// End-to-end over real loopback UDP: a datagram to the advertised port
+    /// flips saverActive, and it decays after maxAge with no further beats.
+    func testHeartbeatListenerReceivesBeats() {
+        guard let listener = HeartbeatListener(maxAge: 0.5) else {
+            XCTFail("failed to bind listener"); return
+        }
+        XCTAssertNotEqual(listener.port, 0)
+        XCTAssertFalse(listener.saverActive)
 
-        // Missing file: not fresh.
-        XCTAssertFalse(SharedFrames.heartbeatFresh(at: url))
+        let beaten = expectation(description: "beat received")
+        listener.onBeat = { beaten.fulfill() }
 
-        try Data().write(to: url)
-        XCTAssertTrue(SharedFrames.heartbeatFresh(at: url))
-        // Same mtime, judged from 10s in the future: stale.
-        XCTAssertFalse(SharedFrames.heartbeatFresh(
-            at: url, now: Date(timeIntervalSinceNow: 10)))
-        // An mtime in the future (clock skew) is stale, not ultra-fresh.
-        XCTAssertFalse(SharedFrames.heartbeatFresh(
-            at: url, now: Date(timeIntervalSinceNow: -10)))
-    }
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        addr.sin_port = listener.port.bigEndian
+        var payload: UInt8 = 1
+        let sent = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                sendto(fd, &payload, 1, 0, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(sent, 1)
 
-    func testHeartbeatURLIsInsideGivenHome() {
-        let url = SharedFrames.heartbeatURL(home: URL(fileURLWithPath: "/container"))
-        XCTAssertEqual(
-            url.path,
-            "/container/Library/Application Support/NESWallpaper/heartbeat")
+        // onBeat is delivered on the main queue; waiting spins the run loop.
+        wait(for: [beaten], timeout: 2)
+        XCTAssertTrue(listener.saverActive)
+
+        // Past maxAge without another beat: stale again.
+        let decayed = expectation(description: "beat decayed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { decayed.fulfill() }
+        wait(for: [decayed], timeout: 2)
+        XCTAssertFalse(listener.saverActive)
     }
 }

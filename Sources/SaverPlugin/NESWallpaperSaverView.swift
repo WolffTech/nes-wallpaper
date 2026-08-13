@@ -26,6 +26,16 @@ public final class NESWallpaperSaverView: ScreenSaverView {
     /// Heartbeat + manifest polling; runs only between start/stopAnimation.
     private var pollTimer: Timer?
     private let statusLabel = NSTextField(labelWithString: "")
+    /// Heartbeat transport: loopback UDP to the port from the manifest.
+    /// (The app cannot read files we write — our container is TCC-protected
+    /// even against same-user processes — but network-client is entitled.)
+    private var beatSocket: Int32 = -1
+    private var beatPort: UInt16 = 0
+    /// Stamped by animateOneFrame; the heartbeat stops when animation
+    /// stops, however that happens — dismissal the OS never delivered,
+    /// display sleep — so a lingering instance can't pin the emulators
+    /// awake, and they pause seconds after frames stop being consumed.
+    private var lastAnimatedAt = Date.distantPast
 
     public override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
@@ -56,9 +66,10 @@ public final class NESWallpaperSaverView: ScreenSaverView {
         super.stopAnimation()
         pollTimer?.invalidate()
         pollTimer = nil
-        // Release the app immediately rather than waiting out the
-        // heartbeat's freshness window.
-        try? FileManager.default.removeItem(at: Self.heartbeatURL)
+        if beatSocket >= 0 {
+            close(beatSocket)
+            beatSocket = -1
+        }
         // Sonoma+ is known to leave the host process (and sometimes the
         // saver instance) alive after dismissal, which would keep burning
         // GPU time. Exiting is the community workaround (see XScreenSaver
@@ -67,31 +78,38 @@ public final class NESWallpaperSaverView: ScreenSaverView {
     }
 
     public override func animateOneFrame() {
+        lastAnimatedAt = Date()
         if let renderer { renderer.draw(tiles: tiles, range: 0..<tiles.count) }
     }
 
     // MARK: - Heartbeat
 
-    /// Inside the sandbox NSHomeDirectory() is the legacyScreenSaver
-    /// container's Data directory — the one place we can write, and where
-    /// the app looks (SharedFrames.appSideHeartbeatURL).
-    private static let heartbeatURL =
-        SharedFrames.heartbeatURL(home: URL(fileURLWithPath: NSHomeDirectory()))
-
     private func pollTick() {
-        touchHeartbeat()
+        sendBeat()
         reloadManifest()
     }
 
-    private func touchHeartbeat() {
-        // Occlusion-gated: if a zombie instance lingers after dismissal
-        // (stopAnimation reportedly never fires on some macOS releases), it
-        // must not hold the app's emulators awake forever.
-        guard window?.occlusionState.contains(.visible) == true else { return }
-        let url = Self.heartbeatURL
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? Data().write(to: url)
+    private func sendBeat() {
+        // Beat only while frames are actually being consumed; see
+        // lastAnimatedAt. The app pauses within its freshness window (4s)
+        // of the last beat.
+        guard beatPort != 0, isAnimating,
+              Date().timeIntervalSince(lastAnimatedAt) < 2 else { return }
+        if beatSocket < 0 {
+            beatSocket = socket(AF_INET, SOCK_DGRAM, 0)
+            guard beatSocket >= 0 else { return }
+        }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        addr.sin_port = beatPort.bigEndian
+        var payload: UInt8 = 1
+        _ = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                sendto(beatSocket, &payload, 1, 0, sa,
+                       socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
     }
 
     // MARK: - Manifest / tile mapping
@@ -107,6 +125,7 @@ public final class NESWallpaperSaverView: ScreenSaverView {
             return
         }
         statusLabel.isHidden = true
+        beatPort = UInt16(clamping: manifest.heartbeatPort)
 
         let shape = (manifest.columns, manifest.rows,
                      manifest.tileWidth, manifest.tileHeight)

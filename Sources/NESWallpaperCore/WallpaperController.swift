@@ -99,10 +99,12 @@ public final class WallpaperController {
     private var screenLocked = false
     private var emulationPaused = false
     private var occlusionDebounce: DispatchWorkItem?
-    /// True while the screensaver plugin's heartbeat is fresh: the saver is
-    /// on screen reading our frame files, so emulation must keep running
+    /// Receives the screensaver's UDP heartbeat: while it beats, the saver
+    /// is on screen reading our frame files, so emulation must keep running
     /// even though the wallpaper itself is covered or the screen is locked.
-    private var saverWatching = false
+    private let heartbeat: HeartbeatListener?
+    /// Re-checks heartbeat staleness while the wallpaper is invisible; beats
+    /// arriving push updates themselves via onBeat.
     private var heartbeatTimer: Timer?
 
     /// Set by the UI to suspend emulation; combined with automatic pause
@@ -148,6 +150,16 @@ public final class WallpaperController {
         helper = try Self.findHelper()
         context = try MetalContext()
         try SharedFrames.prepareTilesDirectory()
+        heartbeat = HeartbeatListener()
+        if heartbeat == nil {
+            Self.log("failed to bind heartbeat socket; screensaver will show frozen frames")
+        }
+        heartbeat?.onBeat = { [weak self] in
+            // First beat after a quiet spell should resume immediately, not
+            // on the next poll tick.
+            guard let self, self.emulationPaused else { return }
+            self.updatePauseState()
+        }
 
         // One grid of helpers total, shared by every display. Spawn them all
         // first, then open their segments: startup (ROM load, shm create)
@@ -270,9 +282,10 @@ public final class WallpaperController {
             !$0.window.occlusionState.contains(.visible)
         }
         // The wallpaper being invisible only matters while the saver isn't
-        // showing our frames instead. Watch for its heartbeat exactly when
+        // showing our frames instead. Re-check staleness exactly while
         // invisibility would otherwise pause us.
         updateHeartbeatPolling(wanted: screenLocked || allOccluded)
+        let saverWatching = heartbeat?.saverActive ?? false
         let shouldPause = userPaused
             || ((screenLocked || allOccluded) && !saverWatching)
         // Links are per-window: never draw to an invisible window, even
@@ -291,25 +304,19 @@ public final class WallpaperController {
         }
     }
 
-    /// Poll the saver's heartbeat while the wallpaper is invisible; stop
-    /// (and forget the saver) as soon as it is visible again.
+    /// While the wallpaper is invisible, re-evaluate periodically so a
+    /// heartbeat going stale pauses emulation again; arriving beats push
+    /// their own updates. Visible again: no polling needed.
     private func updateHeartbeatPolling(wanted: Bool) {
         if wanted, heartbeatTimer == nil {
-            saverWatching = SharedFrames.heartbeatFresh(at: SharedFrames.appSideHeartbeatURL)
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                let fresh = SharedFrames.heartbeatFresh(at: SharedFrames.appSideHeartbeatURL)
-                if fresh != self.saverWatching {
-                    self.saverWatching = fresh
-                    self.updatePauseState()
-                }
+                self?.updatePauseState()
             }
             RunLoop.main.add(timer, forMode: .common)
             heartbeatTimer = timer
         } else if !wanted, heartbeatTimer != nil {
             heartbeatTimer?.invalidate()
             heartbeatTimer = nil
-            saverWatching = false
         }
     }
 
@@ -319,6 +326,7 @@ public final class WallpaperController {
             pid: getpid(), columns: columns, rows: rows,
             tileWidth: filter.outputSize.width,
             tileHeight: filter.outputSize.height,
+            heartbeatPort: Int(heartbeat?.port ?? 0),
             tiles: tiles.map(\.shmName))
         do {
             try SharedFrames.write(manifest)
