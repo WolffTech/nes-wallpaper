@@ -562,7 +562,6 @@ void X6502_Run(int32 cycles)
    cycles*=16;    // 16*4=64
 
   _count+=cycles;
-extern int test; test++;
   while(_count>0)
   {
    int32 temp;
@@ -624,8 +623,6 @@ extern int test; test++;
 
 	//will probably cause a major speed decrease on low-end systems
    DEBUG( DebugCycle() );
-
-   IncrementInstructionsCounters();
 
    _PI=_P;
    b1=RdMem(_PC);

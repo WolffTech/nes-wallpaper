@@ -18,7 +18,8 @@
   includes a frontend header; this one declares the frontend globals the core
   references (`dendy`, `pal_emulation`, `swapDuty`), which are defined in
   `Sources/CFCEUX/shim/fceux_shim.cpp`.
-- No upstream source files were edited.
+- `Sources/CFCEUX/fceux/x6502.cpp` removes debugger/test counters from the CPU
+  loop, keeping unused per-instruction bookkeeping out of the embedded core.
 
 The shim (`Sources/CFCEUX/shim/`) implements the `FCEUD_*` driver interface headlessly
 and exposes the C API in `Sources/CFCEUX/include/fceux_c.h`.

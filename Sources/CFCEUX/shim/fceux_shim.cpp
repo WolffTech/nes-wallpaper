@@ -125,21 +125,35 @@ void fceux_set_joypad(int pad, unsigned char buttons) {
 	s_joypad_data = (s_joypad_data & ~(0xFFu << shift)) | ((uint32)buttons << shift);
 }
 
-const unsigned char *fceux_run_frame(int skip_render) {
+static int emulate_frame(unsigned char *dest, int pitch, bool convert_output) {
+	if (convert_output && (!dest || pitch < s_out_w * 4))
+		return 0;
 	uint8 *gfx = nullptr;
 	int32 *sound = nullptr;
 	int32 ssize = 0;
-	FCEUI_Emulate(&gfx, &sound, &ssize, skip_render ? 1 : 0);
-	if (skip_render || !gfx || !s_blit_inited)
-		return nullptr;
+	// Always use the exact PPU path. Fast-forward and low-power playback skip
+	// only the comparatively expensive output color conversion.
+	FCEUI_Emulate(&gfx, &sound, &ssize, 0);
+	if (!convert_output || !gfx || !s_blit_inited)
+		return 0;
 	if (s_paletterefresh) {
 		SetPaletteBlitToHigh(&s_palette4[0][0]);
 		s_paletterefresh = 0;
 	}
 	// gfx is XBuf itself. Blit8ToHigh needs the real XBuf pointer: it
 	// locates the parallel deemphasis plane (XDBuf) via src - XBuf.
-	Blit8ToHigh(gfx, s_out.data(), 256, 240, s_out_w * 4, s_xscale, s_yscale);
+	Blit8ToHigh(gfx, dest, 256, 240, pitch, s_xscale, s_yscale);
+	return 1;
+}
+
+const unsigned char *fceux_run_frame(int skip_render) {
+	if (!emulate_frame(s_out.data(), s_out_w * 4, skip_render == 0))
+		return nullptr;
 	return s_out.data();
+}
+
+int fceux_run_frame_into(unsigned char *bgrx, int pitch) {
+	return emulate_frame(bgrx, pitch, true);
 }
 
 int fceux_frame_width(void) { return s_out_w; }

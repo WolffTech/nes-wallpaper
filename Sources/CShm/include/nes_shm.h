@@ -40,7 +40,7 @@ typedef struct {
     /* Written by the helper, read by the app. Use the nes_shm_load/store
        helpers below; Swift cannot express C11 atomics directly. */
     volatile uint32_t front;         /* 0 or 1: last completed buffer */
-    volatile uint32_t frame_count;   /* frames emulated since start */
+    volatile uint32_t frame_count;   /* frames published since start */
     volatile uint32_t movie_playing; /* 1 while an FM2 is driving input */
     volatile uint32_t movie_frame;   /* current movie frame index */
 

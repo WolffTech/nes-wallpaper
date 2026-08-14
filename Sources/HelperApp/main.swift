@@ -3,10 +3,11 @@ import CFCEUX
 import CShm
 
 // Usage: nes-helper --shm <frame-file-path> --rom <path> [--movie <path.fm2>]
-//        [--start-frame N] [--loop] [--filter <name>]
+//        [--start-frame N] [--loop] [--filter <name>] [--low-power]
 //
-// Runs one FCEUX instance and publishes frames into a shared frame file
-// (created here, mmapped by readers) at NES NTSC rate. Quits on SIGTERM/SIGINT, stdin "quit"/EOF, or orphaning.
+// Runs one FCEUX instance at the NES NTSC rate and publishes frames into a
+// shared frame file (created here, mmapped by readers) at 60 fps normally or
+// 30 fps in Low Power Mode. Quits on SIGTERM/SIGINT, stdin "quit"/EOF, or orphaning.
 // --start-frame fast-forwards the movie (unpaced, render skipped) so the
 // tile starts mid-game, like the original saver's checkpoints.
 
@@ -35,6 +36,7 @@ var moviePath: String?
 var startFrame = 0
 var loopMovie = false
 var filterName = "none"
+var initialLowPowerMode = false
 var badArgs = false
 
 var args = Array(CommandLine.arguments.dropFirst())
@@ -48,27 +50,55 @@ while !args.isEmpty {
         guard let n = Int(args.removeFirst()), n >= 0 else { badArgs = true; break }
         startFrame = n
     case "--loop": loopMovie = true
+    case "--low-power": initialLowPowerMode = true
     case "--filter" where !args.isEmpty: filterName = args.removeFirst()
     default: badArgs = true
     }
 }
 
 guard !badArgs, let shmName, let romPath, let filter = filterMap[filterName] else {
-    FileHandle.standardError.write("usage: nes-helper --shm <frame-file-path> --rom <path> [--movie <path.fm2>] [--start-frame N] [--loop] [--filter \(filterMap.keys.sorted().joined(separator: "|"))]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: nes-helper --shm <frame-file-path> --rom <path> [--movie <path.fm2>] [--start-frame N] [--loop] [--filter \(filterMap.keys.sorted().joined(separator: "|"))] [--low-power]\n".data(using: .utf8)!)
     exit(2)
 }
 
-// Control flags, shared between the main loop, signal sources, and the
-// stdin reader thread.
-let flagsLock = NSLock()
+// Control state shared between the main loop, signal sources, and stdin.
+// The condition lets a paused helper sleep indefinitely instead of waking at
+// the emulation cadence just to discover that it is still paused.
+let stateCondition = NSCondition()
 var wantQuit = false
 var paused = false
+var lowPowerMode = initialLowPowerMode
 
-func setQuit() { flagsLock.lock(); wantQuit = true; flagsLock.unlock() }
-func setPaused(_ p: Bool) { flagsLock.lock(); paused = p; flagsLock.unlock() }
-func readFlags() -> (quit: Bool, paused: Bool) {
-    flagsLock.lock(); defer { flagsLock.unlock() }
-    return (wantQuit, paused)
+func setQuit() {
+    stateCondition.lock()
+    wantQuit = true
+    stateCondition.broadcast()
+    stateCondition.unlock()
+}
+func setPaused(_ value: Bool) {
+    stateCondition.lock()
+    paused = value
+    stateCondition.broadcast()
+    stateCondition.unlock()
+}
+func setLowPowerMode(_ value: Bool) {
+    stateCondition.lock()
+    lowPowerMode = value
+    stateCondition.broadcast()
+    stateCondition.unlock()
+}
+func readState() -> (quit: Bool, paused: Bool, lowPower: Bool) {
+    stateCondition.lock(); defer { stateCondition.unlock() }
+    return (wantQuit, paused, lowPowerMode)
+}
+func waitUntilRunnable() -> (quit: Bool, resumed: Bool) {
+    stateCondition.lock(); defer { stateCondition.unlock() }
+    var waited = false
+    while paused && !wantQuit {
+        waited = true
+        stateCondition.wait()
+    }
+    return (wantQuit, waited)
 }
 
 let baseDir = NSTemporaryDirectory().appending("fceux-helper-\(getpid())")
@@ -85,12 +115,11 @@ guard fceux_set_video_filter(filter.0, filter.1) != 0 else {
 }
 let frameWidth = Int(fceux_frame_width())
 let frameHeight = Int(fceux_frame_height())
-let pixBytes = frameWidth * frameHeight * 4
 
 guard let shm = nes_shm_create(shmName, UInt32(frameWidth), UInt32(frameHeight)) else {
     log("failed to create shm \(shmName)"); exit(1)
 }
-log("started: shm=\(shmName) rom=\(romPath) movie=\(moviePath ?? "none")\(loopMovie ? " loop" : "") filter=\(filterName) \(frameWidth)x\(frameHeight)")
+log("started: shm=\(shmName) rom=\(romPath) movie=\(moviePath ?? "none")\(loopMovie ? " loop" : "") filter=\(filterName) \(frameWidth)x\(frameHeight)\(initialLowPowerMode ? " low-power" : "")")
 
 signal(SIGTERM, SIG_IGN)
 signal(SIGINT, SIG_IGN)
@@ -108,6 +137,8 @@ Thread.detachNewThread {
         case "quit": log("stdin quit"); setQuit(); return
         case "pause": log("paused"); setPaused(true)
         case "resume": log("resumed"); setPaused(false)
+        case "low-power": log("low-power mode"); setLowPowerMode(true)
+        case "normal-power": log("normal-power mode"); setLowPowerMode(false)
         default: break
         }
     }
@@ -122,8 +153,8 @@ Thread.detachNewThread {
 if moviePath != nil, startFrame > 0 {
     let ffStart = DispatchTime.now()
     var skipped = 0
-    while fceux_movie_frame() < startFrame, fceux_movie_is_playing() != 0, !readFlags().quit {
-        _ = fceux_run_frame(1) // skip_render: returns NULL, do not publish
+    while fceux_movie_frame() < startFrame, fceux_movie_is_playing() != 0, !readState().quit {
+        _ = fceux_run_frame(2) // exact emulation, no conversion or publication
         skipped += 1
     }
     let seconds = Double(DispatchTime.now().uptimeNanoseconds &- ffStart.uptimeNanoseconds)
@@ -136,19 +167,30 @@ if moviePath != nil, startFrame > 0 {
 // The paced schedule's start reference is taken here, after any fast-forward,
 // so the loop does not burst-run to "catch up" on the fast-forward time.
 let frameNanos = 1_000_000_000.0 / 60.0988
-let start = DispatchTime.now()
+var scheduleStart = DispatchTime.now()
 var tick: UInt64 = 0
-var frameCount: UInt32 = 0
-var lastPpidCheck = start
+var emulatedFrameCount: UInt64 = 0
+var publishedFrameCount: UInt32 = 0
+var lastPpidCheck = scheduleStart
 var movieEnded = false
 
 emulation: while true {
+    let permission = waitUntilRunnable()
+    if permission.quit { break emulation }
+    if permission.resumed {
+        // Do not burst-run frames to catch up with time spent paused.
+        scheduleStart = DispatchTime.now()
+        tick = 0
+    }
+
     // Drift-corrected deadline from the fixed start time, not accumulated sleeps.
     tick += 1
-    let deadline = start.uptimeNanoseconds &+ UInt64(Double(tick) * frameNanos)
+    let deadline = scheduleStart.uptimeNanoseconds &+ UInt64(Double(tick) * frameNanos)
     var now = DispatchTime.now().uptimeNanoseconds
     while now < deadline {
-        Thread.sleep(forTimeInterval: Double(deadline - now) / 1_000_000_000.0)
+        // A direct kernel sleep avoids Foundation timer machinery in every
+        // helper, while the loop still handles an early wake without drift.
+        usleep(useconds_t((deadline - now + 999) / 1_000))
         now = DispatchTime.now().uptimeNanoseconds
     }
 
@@ -157,18 +199,29 @@ emulation: while true {
         if getppid() == 1 { log("orphaned (parent died)"); break emulation }
     }
 
-    let flags = readFlags()
-    if flags.quit { break emulation }
-    if flags.paused { continue }
+    let state = readState()
+    if state.quit { break emulation }
+    if state.paused { continue }
 
-    guard let bgrx = fceux_run_frame(0) else { continue }
-    let back = 1 - nes_shm_load(&shm.pointee.front)
-    memcpy(nes_shm_pixels(shm, back), bgrx, pixBytes)
-    nes_shm_store(&shm.pointee.front, back)
-    frameCount &+= 1
-    nes_shm_store(&shm.pointee.frame_count, frameCount)
-    nes_shm_store(&shm.pointee.movie_playing, UInt32(fceux_movie_is_playing()))
-    nes_shm_store(&shm.pointee.movie_frame, UInt32(max(0, fceux_movie_frame())))
+    // Low Power Mode preserves every emulated frame (and therefore TAS and
+    // game timing) but converts and publishes only alternate frames.
+    let shouldPublish = !state.lowPower || emulatedFrameCount.isMultiple(of: 2)
+    if shouldPublish {
+        let back = 1 - nes_shm_load(&shm.pointee.front)
+        guard fceux_run_frame_into(
+            nes_shm_pixels(shm, back), Int32(shm.pointee.pitch)) != 0 else {
+            log("failed to render into shared frame buffer; exiting")
+            break emulation
+        }
+        nes_shm_store(&shm.pointee.front, back)
+        publishedFrameCount &+= 1
+        nes_shm_store(&shm.pointee.frame_count, publishedFrameCount)
+        nes_shm_store(&shm.pointee.movie_playing, UInt32(fceux_movie_is_playing()))
+        nes_shm_store(&shm.pointee.movie_frame, UInt32(max(0, fceux_movie_frame())))
+    } else {
+        _ = fceux_run_frame(2) // exact core frame, no color conversion
+    }
+    emulatedFrameCount &+= 1
 
     if let moviePath, !movieEnded, fceux_movie_is_playing() == 0 {
         if loopMovie {

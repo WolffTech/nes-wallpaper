@@ -32,11 +32,19 @@ void fceux_set_joypad(int pad, unsigned char buttons);
    Changes fceux_frame_width/height. Returns 1 on success, 0 on failure. */
 int fceux_set_video_filter(int specfilt, int specfilteropt);
 
-/* Emulate one frame. Returns pointer to an internal BGRX8888 buffer
-   (bytes B,G,R,X in memory; X undefined — treat as opaque), sized
-   fceux_frame_width x fceux_frame_height, tightly packed (pitch ==
-   width * 4). Valid until the next call. */
+/* Exact-emulate one frame. skip_render == 0 also performs BGRX conversion;
+   nonzero skips only that conversion, without using FCEUX's approximate PPU
+   frame-skip path. When converted, returns a pointer to an internal BGRX8888
+   buffer (bytes B,G,R,X in memory; X undefined — treat as opaque), sized
+   fceux_frame_width x fceux_frame_height, tightly packed (pitch == width * 4).
+   Otherwise returns NULL. The pointer is valid until the next call. */
 const unsigned char *fceux_run_frame(int skip_render);
+
+/* Exact-emulate and convert one frame directly into a caller-owned BGRX8888
+   buffer. pitch must be at least fceux_frame_width() * 4. This avoids the
+   internal output buffer and a second copy when publishing to shared memory.
+   Returns 1 on success, 0 for an invalid buffer or pitch. */
+int fceux_run_frame_into(unsigned char *bgrx, int pitch);
 
 /* Filter-dependent: 256x240 raw, 602x480 NTSC, 512x480 2x, 768x720 3x. */
 int fceux_frame_width(void);
