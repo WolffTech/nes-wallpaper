@@ -23,9 +23,23 @@ final class SharedFramesTests: XCTestCase {
 
         let manifest = SharedFrames.Manifest(
             pid: 4242, columns: 3, rows: 2, tileWidth: 256, tileHeight: 240,
-            heartbeatPort: 50000, tiles: ["/a.frame", "/b.frame"])
+            heartbeatPort: 50000, lowPowerMode: true,
+            tiles: ["/a.frame", "/b.frame"])
         try SharedFrames.write(manifest, to: url)
         XCTAssertEqual(SharedFrames.readManifest(from: url), manifest)
+    }
+
+    func testManifestWithoutLowPowerFieldRemainsCompatible() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("manifest.legacy.\(getpid()).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let json = """
+        {"version":1,"pid":4242,"columns":1,"rows":1,"tileWidth":256,
+        "tileHeight":240,"heartbeatPort":50000,"tiles":["/a.frame"]}
+        """
+        try Data(json.utf8).write(to: url)
+        let manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
+        XCTAssertNil(manifest.lowPowerMode)
     }
 
     func testManifestReadRejectsMissingOrGarbage() throws {

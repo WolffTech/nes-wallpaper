@@ -54,7 +54,8 @@ public final class TileProcess: TileFrameSource {
     private var shm: UnsafeMutablePointer<nes_shm_t>?
 
     public init(helper: URL, shmName: String, rom: String, movie: String?,
-                startFrame: Int = 0, loop: Bool = true, filter: VideoFilter = .none) throws {
+                startFrame: Int = 0, loop: Bool = true,
+                filter: VideoFilter = .none, lowPowerMode: Bool = false) throws {
         self.shmName = shmName
         var arguments = ["--shm", shmName, "--rom", rom, "--filter", filter.rawValue]
         if let movie {
@@ -62,6 +63,7 @@ public final class TileProcess: TileFrameSource {
             if startFrame > 0 { arguments += ["--start-frame", String(startFrame)] }
             if loop { arguments.append("--loop") }
         }
+        if lowPowerMode { arguments.append("--low-power") }
         let pipe = Pipe()
         process = Process()
         process.executableURL = helper
@@ -118,6 +120,9 @@ public final class TileProcess: TileFrameSource {
 
     public func pause() { send("pause\n") }
     public func resume() { send("resume\n") }
+    public func setLowPowerMode(_ enabled: Bool) {
+        send(enabled ? "low-power\n" : "normal-power\n")
+    }
 
     private func send(_ command: String) {
         guard process.isRunning else { return }

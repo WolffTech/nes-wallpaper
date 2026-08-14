@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 
 public struct WallpaperError: Error, CustomStringConvertible {
     public let description: String
@@ -71,6 +72,7 @@ public final class WallpaperController {
     /// added and removed as a unit on hot-plug.
     private struct ScreenSlot {
         let window: NSWindow
+        let view: WallpaperMetalView
         let screenNumber: NSNumber?
         let renderer: TileGridRenderer
         let displayLink: CADisplayLink
@@ -107,6 +109,21 @@ public final class WallpaperController {
     /// arriving push updates themselves via onBeat.
     private var heartbeatTimer: Timer?
 
+    /// Reduces publication/presentation to 30 fps and renders the wallpaper
+    /// at logical rather than Retina resolution. Core emulation remains exact
+    /// at the native NES rate so movies and game timing do not change.
+    public var lowPowerMode: Bool {
+        didSet {
+            guard lowPowerMode != oldValue else { return }
+            for slot in slots {
+                slot.view.lowPowerMode = lowPowerMode
+                configureFrameRate(for: slot.displayLink)
+            }
+            for tile in tiles { tile.setLowPowerMode(lowPowerMode) }
+            writeManifest()
+        }
+    }
+
     /// Set by the UI to suspend emulation; combined with automatic pause
     /// (screen locked, all wallpaper windows occluded) in updatePauseState.
     public var userPaused = false {
@@ -115,7 +132,7 @@ public final class WallpaperController {
 
     /// Adapts a fixed rom/movie list to a cycling tile source, no rotation.
     public convenience init(pairs: [(rom: String, movie: String?)], columns: Int, rows: Int,
-                            filter: VideoFilter = .none) throws {
+                            filter: VideoFilter = .none, lowPowerMode: Bool = false) throws {
         guard !pairs.isEmpty else {
             throw WallpaperError("need at least one rom and a positive grid")
         }
@@ -127,7 +144,7 @@ public final class WallpaperController {
                 return TileSpec(rom: pair.rom, movie: pair.movie, startFrame: 0)
             },
             rotationInterval: nil, columns: columns, rows: rows,
-            filter: filter)
+            filter: filter, lowPowerMode: lowPowerMode)
     }
 
     /// tileSource is called once per tile at startup and once per rotation,
@@ -138,7 +155,8 @@ public final class WallpaperController {
     /// a stagger rather than all at once.
     public init(tileSource: @escaping (Set<String>) -> TileSpec?,
                 rotationInterval: TimeInterval?,
-                columns: Int, rows: Int, filter: VideoFilter = .none) throws {
+                columns: Int, rows: Int, filter: VideoFilter = .none,
+                lowPowerMode: Bool = false) throws {
         guard columns > 0, rows > 0 else {
             throw WallpaperError("need at least one rom and a positive grid")
         }
@@ -146,6 +164,7 @@ public final class WallpaperController {
         self.rows = rows
         self.filter = filter
         self.tileSource = tileSource
+        self.lowPowerMode = lowPowerMode
 
         helper = try Self.findHelper()
         context = try MetalContext()
@@ -228,15 +247,14 @@ public final class WallpaperController {
         })
     }
 
-    /// Window, renderer, and display link for one display. Each link runs at
-    /// its display's native cadence; uploads are gated on frame_count, so a
-    /// 120 Hz ProMotion display costs extra draws but no extra texture
-    /// uploads.
+    /// Window, renderer, and display link for one display. Links are capped at
+    /// the active 60/30 fps publication rate, and unchanged frames are gated
+    /// before drawable acquisition.
     private func addSlot(for screen: NSScreen) throws {
         let window = Self.makeDesktopWindow(frame: screen.frame)
         let content = WallpaperMetalView(
             frame: NSRect(origin: .zero, size: screen.frame.size),
-            device: context.device)
+            device: context.device, lowPowerMode: lowPowerMode)
         window.contentView = content
 
         let (tileWidth, tileHeight) = filter.outputSize
@@ -247,6 +265,7 @@ public final class WallpaperController {
 
         let driver = DisplayLinkDriver(controller: self, renderer: renderer)
         let link = content.displayLink(target: driver, selector: #selector(DisplayLinkDriver.step(_:)))
+        configureFrameRate(for: link)
         link.isPaused = emulationPaused
         link.add(to: .main, forMode: .common)
 
@@ -262,6 +281,7 @@ public final class WallpaperController {
 
         slots.append(ScreenSlot(
             window: window,
+            view: content,
             screenNumber: screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
             renderer: renderer,
             displayLink: link,
@@ -273,6 +293,12 @@ public final class WallpaperController {
         slot.displayLink.invalidate()
         NotificationCenter.default.removeObserver(slot.occlusionObserver)
         slot.window.orderOut(nil)
+    }
+
+    private func configureFrameRate(for link: CADisplayLink) {
+        let fps: Float = lowPowerMode ? 30 : 60
+        link.preferredFrameRateRange = CAFrameRateRange(
+            minimum: fps, maximum: fps, preferred: fps)
     }
 
     private func updatePauseState() {
@@ -327,6 +353,7 @@ public final class WallpaperController {
             tileWidth: filter.outputSize.width,
             tileHeight: filter.outputSize.height,
             heartbeatPort: Int(heartbeat?.port ?? 0),
+            lowPowerMode: lowPowerMode,
             tiles: tiles.map(\.shmName))
         do {
             try SharedFrames.write(manifest)
@@ -368,7 +395,8 @@ public final class WallpaperController {
         shmCounter += 1
         return try TileProcess(
             helper: helper, shmName: shmName, rom: spec.rom, movie: spec.movie,
-            startFrame: spec.startFrame, filter: filter)
+            startFrame: spec.startFrame, filter: filter,
+            lowPowerMode: lowPowerMode)
     }
 
     /// Replace one tile, round-robin, without blocking the main thread:

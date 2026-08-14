@@ -11,6 +11,7 @@ struct WallpaperSettings {
     static let rotationMinutesKey = "RotationMinutes"
     static let includeROMsWithoutMoviesKey = "IncludeROMsWithoutMovies"
     static let videoFilterKey = "VideoFilter"
+    static let lowPowerModeKey = "LowPowerMode"
 
     var romsDir: String?
     var moviesDir: String?
@@ -19,6 +20,7 @@ struct WallpaperSettings {
     var rotationMinutes: Int // 0 = never rotate
     var includeROMsWithoutMovies: Bool
     var videoFilter: VideoFilter
+    var lowPowerMode: Bool
 
     var rotationInterval: TimeInterval? {
         rotationMinutes > 0 ? TimeInterval(rotationMinutes) * 60 : nil
@@ -35,7 +37,8 @@ struct WallpaperSettings {
             includeROMsWithoutMovies: defaults.object(
                 forKey: includeROMsWithoutMoviesKey) as? Bool ?? true,
             videoFilter: VideoFilter(
-                rawValue: defaults.string(forKey: videoFilterKey) ?? "") ?? .none)
+                rawValue: defaults.string(forKey: videoFilterKey) ?? "") ?? .none,
+            lowPowerMode: defaults.bool(forKey: lowPowerModeKey))
     }
 
     func save() {
@@ -47,6 +50,7 @@ struct WallpaperSettings {
         defaults.set(rotationMinutes, forKey: Self.rotationMinutesKey)
         defaults.set(includeROMsWithoutMovies, forKey: Self.includeROMsWithoutMoviesKey)
         defaults.set(videoFilter.rawValue, forKey: Self.videoFilterKey)
+        defaults.set(lowPowerMode, forKey: Self.lowPowerModeKey)
     }
 }
 
@@ -69,6 +73,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private let startStopItem = NSMenuItem()
     private let pauseItem = NSMenuItem()
+    private let lowPowerItem = NSMenuItem()
 
     override init() {
         super.init()
@@ -93,6 +98,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         pauseItem.target = self
         pauseItem.action = #selector(togglePause)
         menu.addItem(pauseItem)
+
+        lowPowerItem.title = "Low Power Mode"
+        lowPowerItem.target = self
+        lowPowerItem.action = #selector(toggleLowPowerMode)
+        menu.addItem(lowPowerItem)
 
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…",
@@ -126,6 +136,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         startStopItem.title = controller == nil ? "Start Wallpaper" : "Stop Wallpaper"
         pauseItem.title = userWantsPause ? "Resume" : "Pause"
         pauseItem.isEnabled = controller != nil
+        lowPowerItem.state = WallpaperSettings.load().lowPowerMode ? .on : .off
     }
 
     @objc private func toggleWallpaper() {
@@ -139,6 +150,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func togglePause() {
         userWantsPause.toggle()
         controller?.userPaused = userWantsPause
+        refreshMenuTitles()
+    }
+
+    @objc private func toggleLowPowerMode() {
+        var settings = WallpaperSettings.load()
+        settings.lowPowerMode.toggle()
+        settings.save()
+        controller?.lowPowerMode = settings.lowPowerMode
         refreshMenuTitles()
     }
 
@@ -214,7 +233,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 tileSource: tileSource,
                 rotationInterval: settings.rotationInterval,
                 columns: settings.columns, rows: settings.rows,
-                filter: settings.videoFilter)
+                filter: settings.videoFilter,
+                lowPowerMode: settings.lowPowerMode)
             controller.userPaused = userWantsPause
             self.controller = controller
         } catch {

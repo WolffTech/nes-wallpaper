@@ -133,6 +133,7 @@ public final class NESWallpaperSaverView: ScreenSaverView {
             rebuildRenderer(manifest: manifest)
         }
         guard let renderer else { return }
+        metalView?.lowPowerMode = manifest.lowPowerMode ?? false
 
         // Remap tiles whose path changed (rotation), and keep retrying
         // slots that never mapped (helper still starting, or tile dead).
@@ -153,7 +154,9 @@ public final class NESWallpaperSaverView: ScreenSaverView {
         do {
             let context = try self.context ?? MetalContext()
             self.context = context
-            let view = WallpaperMetalView(frame: bounds, device: context.device)
+            let view = WallpaperMetalView(
+                frame: bounds, device: context.device,
+                lowPowerMode: manifest.lowPowerMode ?? false)
             view.autoresizingMask = [.width, .height]
             addSubview(view, positioned: .below, relativeTo: statusLabel)
             renderer = try TileGridRenderer(

@@ -5,15 +5,15 @@ import NESWallpaperCore
 // into shared memory; this app renders the grid on a borderless window at
 // desktop level (behind icons).
 // Usage: nes-wallpaper [--grid CxR] [--rotate SECONDS] [--start-frame N]
-//        [--filter NAME] <rom[:movie.fm2]>...
-//        nes-wallpaper [--grid CxR] [--rotate SECONDS] [--filter NAME]
+//        [--filter NAME] [--low-power] <rom[:movie.fm2]>...
+//        nes-wallpaper [--grid CxR] [--rotate SECONDS] [--filter NAME] [--low-power]
 //        --roms DIR --movies DIR
 
 func usage() -> Never {
     let filters = VideoFilter.allCases.map(\.rawValue).joined(separator: "|")
     FileHandle.standardError.write(Data("""
-    usage: nes-wallpaper [--grid CxR] [--rotate SECONDS] [--start-frame N] [--filter NAME] <rom[:movie.fm2]>...
-           nes-wallpaper [--grid CxR] [--rotate SECONDS] [--filter NAME] --roms DIR --movies DIR
+    usage: nes-wallpaper [--grid CxR] [--rotate SECONDS] [--start-frame N] [--filter NAME] [--low-power] <rom[:movie.fm2]>...
+           nes-wallpaper [--grid CxR] [--rotate SECONDS] [--filter NAME] [--low-power] --roms DIR --movies DIR
     filters: \(filters)
 
     """.utf8))
@@ -25,6 +25,7 @@ var rows = 2
 var rotationInterval: TimeInterval?
 var startFrame = 0
 var videoFilter = VideoFilter.none
+var lowPowerMode = false
 var pairs: [(rom: String, movie: String?)] = []
 var romsDir: String?
 var moviesDir: String?
@@ -60,6 +61,8 @@ while !args.isEmpty {
     case "--filter":
         guard !args.isEmpty, let f = VideoFilter(rawValue: args.removeFirst()) else { usage() }
         videoFilter = f
+    case "--low-power":
+        lowPowerMode = true
     default:
         if let colon = arg.firstIndex(of: ":") {
             pairs.append((rom: String(arg[..<colon]),
@@ -114,7 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 tileSource: makeTileSource(),
                 rotationInterval: rotationInterval,
                 columns: columns, rows: rows,
-                filter: videoFilter)
+                filter: videoFilter,
+                lowPowerMode: lowPowerMode)
         } catch {
             FileHandle.standardError.write(Data("nes-wallpaper: \(error)\n".utf8))
             exit(1)

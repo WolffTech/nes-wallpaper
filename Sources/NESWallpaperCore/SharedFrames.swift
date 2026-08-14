@@ -60,11 +60,15 @@ public enum SharedFrames {
         /// listener could not be created (saver then shows frozen frames
         /// while the wallpaper is paused, but nothing breaks).
         public let heartbeatPort: Int
+        /// Optional for backward compatibility with manifests written before
+        /// Low Power Mode existed; a missing value means normal rendering.
+        public let lowPowerMode: Bool?
         public let tiles: [String]
 
         public init(pid: Int32, columns: Int, rows: Int,
                     tileWidth: Int, tileHeight: Int,
-                    heartbeatPort: Int, tiles: [String]) {
+                    heartbeatPort: Int, lowPowerMode: Bool = false,
+                    tiles: [String]) {
             self.version = 1
             self.pid = pid
             self.columns = columns
@@ -72,6 +76,7 @@ public enum SharedFrames {
             self.tileWidth = tileWidth
             self.tileHeight = tileHeight
             self.heartbeatPort = heartbeatPort
+            self.lowPowerMode = lowPowerMode
             self.tiles = tiles
         }
     }
