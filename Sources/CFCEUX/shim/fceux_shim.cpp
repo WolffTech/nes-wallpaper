@@ -175,7 +175,10 @@ long fceux_state_save(unsigned char *buf, long capacity) {
 int fceux_state_load(const unsigned char *buf, long size) {
 	std::vector<u8> vec(buf, buf + size);
 	EMUFILE_MEMORY mem(&vec);
-	return FCEUSS_LoadFP(&mem, SSLOADPARAM_NOBACKUP) ? 1 : 0;
+	// BACKUP matches FCEUX's own movie-savestate path (movie.cpp): if the
+	// load is rejected (GUID/timeline mismatch, post-movie state), the core
+	// rolls back instead of being left half-loaded.
+	return FCEUSS_LoadFP(&mem, SSLOADPARAM_BACKUP) ? 1 : 0;
 }
 
 } // extern "C"
