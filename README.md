@@ -29,9 +29,11 @@ swift build
 | `nes-wallpaper` | The wallpaper app: spawns one helper per tile, renders the grid |
 | `SaverPlugin` | Screensaver (`NES Wallpaper.saver`): renders the same grid from the app's frame files |
 
-The FCEUX core keeps global state, so the app runs one `nes-helper` process per tile; each publishes frames into a double-buffered segment — a plain file under `/Users/Shared/NESWallpaper/` mapped `MAP_SHARED` — that the app composites with Metal, one texture per tile, driven by a per-display CADisplayLink. Every attached display mirrors the same grid from the same helpers — extra displays cost only texture uploads and draws, not extra emulators — and windows follow displays as they are plugged and unplugged.
+The FCEUX core keeps global state, so the app runs one `nes-helper` process per tile; each publishes frames into a double-buffered segment — a plain file under `/Users/Shared/NESWallpaper/` mapped `MAP_SHARED` — that the app composites with Metal, one texture per tile, driven by a per-display CADisplayLink capped at the NES content rate. Unchanged frames are not presented. Every attached display mirrors the same grid from the same helpers — extra displays cost only texture uploads and draws, not extra emulators — and windows follow displays as they are plugged and unplugged.
 
 Frames pass through FCEUX's own CPU video filters inside each helper (`--filter`, or the Video Filter setting): `none` (raw 256×240), the blargg NTSC family (`ntsc-composite`, `ntsc-svideo`, `ntsc-rgb`, `ntsc-mono` at 602×480), `hq2x`/`hq3x`, and `scale2x`/`scale3x`. Filtered output is published at the filter's native size (up to 768×720) and scaled to the tile on the GPU.
+
+Low Power Mode is available from the menu-bar icon (and as `--low-power` in CLI mode). It keeps the emulator and TAS playback running at the exact NES rate, while converting, publishing, and presenting alternate frames at 30 fps. On Retina displays it also renders the wallpaper at logical resolution, which is still comfortably above the source tile resolution.
 
 ## Installing as an app
 
@@ -40,7 +42,7 @@ Frames pass through FCEUX's own CPU video filters inside each helper (`--filter`
 open "dist/NES Wallpaper.app"
 ```
 
-The app lives in the menu bar (no Dock icon). Settings… has three tabs: Library (folders and matching), Display (grid, video filter, rotation) and General (launch at login, screensaver). Pick your ROM and movie folders under Library, and the wallpaper starts automatically each time the app launches after that. Turn on Launch at Login under General to have it start with your Mac (it registers with `SMAppService`, so it also appears under System Settings → General → Login Items). It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time. ROMs with no matching movie join the rotation too, playing their title or attract screen with no input (toggleable in Settings).
+The app lives in the menu bar (no Dock icon). Its menu includes Pause and Low Power Mode controls. Settings… has three tabs: Library (folders and matching), Display (grid, video filter, rotation) and General (launch at login, screensaver). Pick your ROM and movie folders under Library, and the wallpaper starts automatically each time the app launches after that. Turn on Launch at Login under General to have it start with your Mac (it registers with `SMAppService`, so it also appears under System Settings → General → Login Items). It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time. ROMs with no matching movie join the rotation too, playing their title or attract screen with no input (toggleable in Settings).
 
 Browse TASVideos… lists every current NES publication in FM2 format straight from the [tasvideos.org API](https://tasvideos.org/api) and downloads runs into your movies folder. Each row shows whether a matching ROM (by the checksum in the movie's header) is already in your ROM folder; new movies are picked up the next time the wallpaper starts.
 
@@ -60,6 +62,9 @@ swift build
 
 # Same, with a CRT filter
 ./.build/out/Products/Debug/nes-wallpaper --filter ntsc-composite TestData/nestest.nes:TestData/nestest.fm2
+
+# Reduce video conversion and presentation to 30 fps while keeping exact emulation
+./.build/out/Products/Debug/nes-wallpaper --low-power TestData/nestest.nes:TestData/nestest.fm2
 
 # Library mode: point at folders of ROMs and FM2 movies (e.g. from tasvideos.org).
 # Movies are matched to ROMs by the checksum in their header; each tile picks a
