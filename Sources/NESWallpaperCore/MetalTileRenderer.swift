@@ -84,9 +84,16 @@ public final class MetalContext {
 /// Retina-sharp (the old CALayer path never set contentsScale).
 public final class WallpaperMetalView: NSView {
     private let device: MTLDevice
+    public var lowPowerMode: Bool {
+        didSet {
+            guard lowPowerMode != oldValue else { return }
+            updateDrawableSize()
+        }
+    }
 
-    public init(frame: NSRect, device: MTLDevice) {
+    public init(frame: NSRect, device: MTLDevice, lowPowerMode: Bool = false) {
         self.device = device
+        self.lowPowerMode = lowPowerMode
         super.init(frame: frame)
         wantsLayer = true
     }
@@ -116,7 +123,10 @@ public final class WallpaperMetalView: NSView {
     }
 
     private func updateDrawableSize() {
-        let scale = window?.backingScaleFactor ?? 2.0
+        // Logical-resolution rendering is a substantial bandwidth and GPU
+        // saving on Retina laptops, while still leaving far more pixels than
+        // the source NES tiles contain.
+        let scale = lowPowerMode ? 1.0 : (window?.backingScaleFactor ?? 2.0)
         metalLayer.contentsScale = scale
         let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         if size.width > 0, size.height > 0, metalLayer.drawableSize != size {
@@ -135,6 +145,8 @@ public final class TileGridRenderer {
     private let rows: Int
     private let textures: [MTLTexture]
     private var lastUploaded: [UInt32?]
+    private var lastDrawnSize = CGSize.zero
+    private var needsPresent = false
 
     public init(context: MetalContext, view: WallpaperMetalView,
          columns: Int, rows: Int, tileWidth: Int, tileHeight: Int) throws {
@@ -181,10 +193,21 @@ public final class TileGridRenderer {
                     region: MTLRegionMake2D(0, 0, texture.width, texture.height),
                     mipmapLevel: 0, withBytes: pixels, bytesPerRow: bytesPerRow)
             }
-            if let uploaded { lastUploaded[local] = uploaded.frameCount }
+            if let uploaded {
+                needsPresent = lastUploaded[local] != uploaded.frameCount
+                    || needsPresent
+                lastUploaded[local] = uploaded.frameCount
+            }
         }
 
-        guard let drawable = metalLayer.nextDrawable() else { return } // starved: skip frame
+        // A display link may fire more often than the helpers publish. Keep
+        // the last CAMetalLayer contents instead of acquiring and presenting
+        // an identical full-screen drawable. A resize still forces a draw.
+        let drawableSize = metalLayer.drawableSize
+        guard needsPresent || drawableSize != lastDrawnSize else { return }
+        // Keep needsPresent set until a command buffer is committed, so a
+        // temporarily starved CAMetalLayer cannot permanently drop an update.
+        guard let drawable = metalLayer.nextDrawable() else { return }
         guard let commandBuffer = context.queue.makeCommandBuffer() else { return }
 
         let pass = MTLRenderPassDescriptor()
@@ -227,5 +250,7 @@ public final class TileGridRenderer {
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        lastDrawnSize = drawableSize
+        needsPresent = false
     }
 }
