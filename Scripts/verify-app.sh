@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+# SPDX-License-Identifier: GPL-2.0-only
+
 # Validates the assembled app, its embedded screensaver, and their signatures.
 set -euo pipefail
 
@@ -12,6 +15,10 @@ SAVER_PLIST="$SAVER_PATH/Contents/Info.plist"
 test -x "$APP_PATH/Contents/MacOS/NESWallpaper"
 test -x "$APP_PATH/Contents/MacOS/nes-helper"
 test -x "$SAVER_PATH/Contents/MacOS/NESWallpaperSaver"
+test -s "$APP_PATH/Contents/Resources/LICENSE"
+test -s "$APP_PATH/Contents/Resources/SOURCE.md"
+test -s "$APP_PATH/Contents/Resources/THIRD_PARTY_NOTICES.md"
+test -s "$APP_PATH/Contents/Resources/ThirdPartyLicenses/LGPL-2.1-or-later.txt"
 
 plutil -lint "$APP_PLIST" "$SAVER_PLIST"
 

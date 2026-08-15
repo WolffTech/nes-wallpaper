@@ -1,6 +1,11 @@
-// C facade + driver-interface implementation for embedding the FCEUX core.
-// FCEUX expects its "driver" (normally the Qt frontend) to provide FCEUD_*
-// functions; this file supplies headless implementations.
+/*
+ * SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+ * SPDX-License-Identifier: GPL-2.0-only
+ *
+ * C facade and driver-interface implementation for embedding the FCEUX core.
+ * FCEUX expects its driver to provide FCEUD_* functions; this file supplies
+ * headless implementations. See LICENSE.
+ */
 
 #include <cstdio>
 #include <cstdarg>

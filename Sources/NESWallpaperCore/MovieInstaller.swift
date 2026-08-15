@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+// SPDX-License-Identifier: GPL-2.0-only
+
 import Foundation
 
 /// Downloads a publication's movie archive, extracts the FM2, installs it

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+# SPDX-License-Identifier: GPL-2.0-only
+
 # Builds a Developer ID-signed bundle, notarizes it with Apple, staples the
 # ticket, and produces a distributable zip in dist/. Safe to run from any cwd.
 #

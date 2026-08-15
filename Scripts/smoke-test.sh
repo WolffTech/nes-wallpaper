@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+# SPDX-License-Identifier: GPL-2.0-only
+
 # Runs the deterministic nestest ROM and validates the final rendered frame.
 set -euo pipefail
 

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+# SPDX-License-Identifier: GPL-2.0-only
+
 name: Release
 
 on:
@@ -103,16 +106,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           ZIP="dist/NES-Wallpaper-$APP_VERSION.zip"
+          SOURCE_ZIP="dist/NES-Wallpaper-$APP_VERSION-source.zip"
+          git archive --format=zip \
+            --prefix="NES-Wallpaper-$APP_VERSION/" \
+            --output="$SOURCE_ZIP" \
+            "$GITHUB_SHA"
           # A tag created through the GitHub release UI already has a release;
           # attach the zip to it. A plain pushed tag gets a new release.
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$ZIP" "$SOURCE_ZIP" --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
               --title "NES Wallpaper $APP_VERSION" \
               --generate-notes \
               --verify-tag \
-              "$ZIP"
+              "$ZIP" "$SOURCE_ZIP"
           fi
 
       - name: Remove signing keychain

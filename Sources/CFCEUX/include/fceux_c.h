@@ -1,3 +1,10 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+ * SPDX-License-Identifier: GPL-2.0-only
+ *
+ * C facade for the embedded FCEUX core. See LICENSE.
+ */
+
 #ifndef FCEUX_C_H
 #define FCEUX_C_H
 
