@@ -50,6 +50,17 @@ int fceux_run_frame_into(unsigned char *bgrx, int pitch);
 int fceux_frame_width(void);
 int fceux_frame_height(void);
 
+/* Core sound synthesis at runtime: sample rate in Hz, 0 = off. Off by
+   default (fceux_init); the wallpaper enables it only while a tile is
+   taken over for live play. Safe to toggle between frames. */
+void fceux_set_sound_rate(int rate);
+
+/* Mono samples produced by the last emulated frame (int32 holding 16-bit
+   range values). Returns the sample count and points *out at an internal
+   buffer that is overwritten by the next frame; drain every frame while
+   sound is enabled. 0 samples while the rate is 0. */
+int fceux_sound_samples(const int **out);
+
 /* Save-state to/from memory, for checkpointing. Returns byte count, 0 on error.
    fceux_state_save with buf == NULL returns the required size. */
 long fceux_state_save(unsigned char *buf, long capacity);
