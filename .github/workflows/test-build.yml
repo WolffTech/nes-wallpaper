@@ -33,24 +33,10 @@ jobs:
         run: ./Scripts/make-app.sh
 
       - name: Run emulator smoke test
-        run: |
-          BIN_PATH="$(swift build -c release --show-bin-path)"
-          FRAME_DIR="$RUNNER_TEMP/nes-wallpaper-frames"
-          "$BIN_PATH/nes-headless" \
-            TestData/nestest.nes \
-            --frames 60 \
-            --dump-every 60 \
-            --out "$FRAME_DIR"
-          test -n "$(find "$FRAME_DIR" -name '*.png' -print -quit)"
+        run: ./Scripts/smoke-test.sh
 
       - name: Verify app bundle
-        run: |
-          APP_PATH="dist/NES Wallpaper.app"
-          test -x "$APP_PATH/Contents/MacOS/NESWallpaper"
-          test -x "$APP_PATH/Contents/MacOS/nes-helper"
-          file "$APP_PATH/Contents/MacOS/NESWallpaper" | grep -q 'arm64'
-          file "$APP_PATH/Contents/MacOS/nes-helper" | grep -q 'arm64'
-          codesign --verify --strict --deep "$APP_PATH"
+        run: ./Scripts/verify-app.sh
 
       - name: Create download archive
         run: |
