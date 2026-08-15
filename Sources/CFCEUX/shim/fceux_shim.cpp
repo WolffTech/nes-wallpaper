@@ -37,6 +37,11 @@ static uint8 s_palette4[256][4];
 static int s_paletterefresh = 0;
 static uint32 s_joypad_data = 0; // 4 pads, one byte each
 
+// Sound samples from the most recent FCEUI_Emulate call (the core's
+// WaveFinal buffer: mono int32 in 16-bit range, overwritten every frame).
+static int32 *s_last_sound = nullptr;
+static int32 s_last_ssize = 0;
+
 // vidblit output state, set by fceux_set_video_filter.
 static std::vector<unsigned char> s_out;
 static int s_out_w = 0, s_out_h = 0;
@@ -119,6 +124,23 @@ int fceux_movie_is_playing(void) { return FCEUMOV_Mode(MOVIEMODE_PLAY) ? 1 : 0; 
 
 int fceux_movie_frame(void) { return currFrameCounter; }
 
+void fceux_set_sound_rate(int rate) {
+	// FCEUI_Sound just updates FSettings.SndRate and re-derives the sound
+	// state (SetSoundVariables), the same path the Qt frontend uses for
+	// runtime rate changes. Rate 0 skips synthesis entirely.
+	FCEUI_Sound(rate < 0 ? 0 : rate);
+	if (rate <= 0) {
+		s_last_sound = nullptr;
+		s_last_ssize = 0;
+	}
+}
+
+int fceux_sound_samples(const int **out) {
+	if (out)
+		*out = s_last_sound;
+	return s_last_ssize;
+}
+
 void fceux_set_joypad(int pad, unsigned char buttons) {
 	if (pad < 0 || pad > 3) return;
 	uint32 shift = 8u * (uint32)pad;
@@ -134,6 +156,8 @@ static int emulate_frame(unsigned char *dest, int pitch, bool convert_output) {
 	// Always use the exact PPU path. Fast-forward and low-power playback skip
 	// only the comparatively expensive output color conversion.
 	FCEUI_Emulate(&gfx, &sound, &ssize, 0);
+	s_last_sound = sound;
+	s_last_ssize = ssize;
 	if (!convert_output || !gfx || !s_blit_inited)
 		return 0;
 	if (s_paletterefresh) {

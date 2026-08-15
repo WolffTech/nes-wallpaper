@@ -76,6 +76,46 @@ final class FCEUXOutputTests: XCTestCase {
         XCTAssertEqual(noOutputState, renderedState)
     }
 
+    // Sound is disabled by rate only and can be toggled at runtime: off by
+    // default (silent wallpaper), on during live-play takeover.
+    func testRuntimeSoundToggleProducesSamples() throws {
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fceux-sound-tests.\(getpid())", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: support, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        XCTAssertNotEqual(fceux_init(support.path), 0)
+        let rom = testDataDirectory.appendingPathComponent("nestest.nes")
+        XCTAssertNotEqual(fceux_load_game(rom.path), 0)
+        defer {
+            fceux_set_sound_rate(0) // leave the global core silent for other tests
+            fceux_close_game()
+        }
+        XCTAssertNotEqual(fceux_set_video_filter(0, 0), 0)
+
+        var samples: UnsafePointer<Int32>?
+        _ = fceux_run_frame(2)
+        XCTAssertEqual(fceux_sound_samples(&samples), 0, "sound must be off by default")
+
+        fceux_set_sound_rate(44100)
+        var total = 0
+        for _ in 0..<60 {
+            _ = fceux_run_frame(2)
+            let count = Int(fceux_sound_samples(&samples))
+            XCTAssertGreaterThan(count, 0)
+            XCTAssertNotNil(samples)
+            total += count
+        }
+        // 60 NTSC frames at 60.0988 fps is just under one second of audio.
+        XCTAssertGreaterThan(total, 42000)
+        XCTAssertLessThan(total, 46000)
+
+        fceux_set_sound_rate(0)
+        _ = fceux_run_frame(2)
+        XCTAssertEqual(fceux_sound_samples(&samples), 0)
+    }
+
     // The takeover primitive: while an FM2 movie plays, the live joypad is
     // ignored entirely; fceux_stop_movie() preserves console state and the
     // live joypad drives the game from the next frame.

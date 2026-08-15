@@ -254,6 +254,7 @@ var publishedFrameCount: UInt32 = 0
 var lastPpidCheck = scheduleStart
 var movieEnded = false
 var liveInputActive = false
+var takeoverAudio: TakeoverAudio?
 
 emulation: while true {
     let permission = waitUntilRunnable()
@@ -291,9 +292,20 @@ emulation: while true {
         liveInputActive = state.takenOver
         if liveInputActive {
             fceux_stop_movie()
+            // The wallpaper is silent; live play gets sound. Rate 0 -> 44100
+            // at runtime is the same path the Qt frontend uses.
+            fceux_set_sound_rate(Int32(TakeoverAudio.sampleRate))
+            takeoverAudio = TakeoverAudio()
+            if takeoverAudio == nil {
+                fceux_set_sound_rate(0)
+                log("audio output unavailable; playing silently")
+            }
             log("takeover: movie stopped, live input active")
         } else {
             fceux_set_joypad(0, 0)
+            fceux_set_sound_rate(0)
+            takeoverAudio?.stop()
+            takeoverAudio = nil
             log("released" + (moviePath != nil && loopMovie ? ", movie will restart" : ""))
         }
     }
@@ -328,6 +340,16 @@ emulation: while true {
     }
     emulatedFrameCount &+= 1
 
+    // Drain this frame's sound into the audio queue's ring; the core's
+    // buffer is overwritten by the next emulated frame.
+    if let takeoverAudio {
+        var samples: UnsafePointer<Int32>?
+        let sampleCount = fceux_sound_samples(&samples)
+        if sampleCount > 0, let samples {
+            takeoverAudio.append(samples, count: Int(sampleCount))
+        }
+    }
+
     // Skipped while taken over (stopping the movie is what takeover does);
     // after a release this is also the path that hands the tile back by
     // restarting the looped movie from frame 0.
@@ -347,5 +369,6 @@ emulation: while true {
     }
 }
 
+takeoverAudio?.stop()
 nes_shm_close(shm, shmName, 1)
 log("exiting")
