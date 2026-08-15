@@ -9,17 +9,22 @@ permissions:
 jobs:
   build:
     name: Build downloadable test app
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Show toolchain versions
         run: |
           xcodebuild -version
           swift --version
+          test "$(uname -m)" = arm64
 
       - name: Run tests
         run: swift test
@@ -28,22 +33,10 @@ jobs:
         run: ./Scripts/make-app.sh
 
       - name: Run emulator smoke test
-        run: |
-          BIN_PATH="$(swift build -c release --show-bin-path)"
-          FRAME_DIR="$RUNNER_TEMP/nes-wallpaper-frames"
-          "$BIN_PATH/nes-headless" \
-            TestData/nestest.nes \
-            --frames 60 \
-            --dump-every 60 \
-            --out "$FRAME_DIR"
-          test -n "$(find "$FRAME_DIR" -name '*.png' -print -quit)"
+        run: ./Scripts/smoke-test.sh
 
       - name: Verify app bundle
-        run: |
-          APP_PATH="dist/NES Wallpaper.app"
-          test -x "$APP_PATH/Contents/MacOS/NESWallpaper"
-          test -x "$APP_PATH/Contents/MacOS/nes-helper"
-          codesign --verify --strict --deep "$APP_PATH"
+        run: ./Scripts/verify-app.sh
 
       - name: Create download archive
         run: |
@@ -52,7 +45,7 @@ jobs:
             "dist/NES-Wallpaper-test-build.zip"
 
       - name: Upload test build
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: NES-Wallpaper-arm64-${{ github.run_number }}
           path: dist/NES-Wallpaper-test-build.zip

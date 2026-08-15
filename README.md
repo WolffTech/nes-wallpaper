@@ -42,9 +42,37 @@ Low Power Mode is available from the menu-bar icon (and as `--low-power` in CLI 
 open "dist/NES Wallpaper.app"
 ```
 
+Release builds can override the bundle versions without editing the source
+plists. The app and bundled screensaver always receive the same values:
+
+```sh
+APP_VERSION=0.3.0 BUILD_NUMBER=42 ./Scripts/make-app.sh
+```
+
 The app lives in the menu bar (no Dock icon). Its menu includes Pause and Low Power Mode controls. Settings… has three tabs: Library (folders and matching), Display (grid, video filter, rotation) and General (launch at login, screensaver). Pick your ROM and movie folders under Library, and the wallpaper starts automatically each time the app launches after that. Turn on Launch at Login under General to have it start with your Mac (it registers with `SMAppService`, so it also appears under System Settings → General → Login Items). It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time. ROMs with no matching movie join the rotation too, playing their title or attract screen with no input (toggleable in Settings).
 
 Browse TASVideos… lists every current NES publication in FM2 format straight from the [tasvideos.org API](https://tasvideos.org/api) and downloads runs into your movies folder. Each row shows whether a matching ROM (by the checksum in the movie's header) is already in your ROM folder; new movies are picked up the next time the wallpaper starts.
+
+## Releases
+
+Pushing a version tag publishes a signed, notarized build automatically:
+
+```sh
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+The Release workflow runs the tests and smoke test, builds the app with a Developer ID identity, notarizes and staples it, and attaches `NES-Wallpaper-<version>.zip` to a GitHub release. `CFBundleShortVersionString` comes from the tag and `CFBundleVersion` is the commit count on it.
+
+One-time setup — repository secrets (Settings → Secrets and variables → Actions):
+
+- `MACOS_CERT_P12` — base64 of a Developer ID Application certificate export
+  (`base64 -i cert.p12 | pbcopy`)
+- `MACOS_CERT_PASSWORD` — the export's password
+- `NOTARY_KEY_P8` — contents of an App Store Connect API key (.p8)
+- `NOTARY_KEY_ID` / `NOTARY_ISSUER_ID` — the key's ID and issuer ID
+
+Local releases work without any of that: `./Scripts/notarize.sh` uses the keychain certificate and a `notarytool` keychain profile (see the script header for the one-time `store-credentials` setup). The Test Build workflow (manual dispatch) remains the quick path to an unsigned, ad-hoc build of any branch.
 
 ## Screensaver
 
