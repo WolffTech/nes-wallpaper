@@ -60,6 +60,20 @@ final class TileSelectionMode {
             window.allowKey = true
             window.level = .normal
             window.ignoresMouseEvents = false
+            // Keys are consumed in the responder chain (Esc cancels, the
+            // rest are swallowed silently) — see WallpaperWindow.
+            window.keyEventHandler = { [weak self] event in
+                guard let self else { return false }
+                switch event.type {
+                case .keyDown:
+                    if event.keyCode == TakeoverKeymap.escapeKeyCode { self.onCancel() }
+                    return true
+                case .keyUp:
+                    return true
+                default:
+                    return false
+                }
+            }
         }
         NSApp.activate(ignoringOtherApps: true)
         // One key window is enough for Esc; clicks work on any display.
@@ -69,10 +83,6 @@ final class TileSelectionMode {
         monitors.append(NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown]) { [weak self] event in
             self?.handleMouseDown(event) ?? event
-        } as Any)
-        monitors.append(NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown]) { [weak self] event in
-            self?.handleKeyDown(event) ?? event
         } as Any)
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil,
@@ -100,6 +110,7 @@ final class TileSelectionMode {
             entry.window.level = entry.level
             entry.window.ignoresMouseEvents = entry.ignoresMouse
             entry.window.allowKey = false
+            entry.window.keyEventHandler = nil
         }
         saved.removeAll()
     }
@@ -132,19 +143,5 @@ final class TileSelectionMode {
             onPick(tile)
         }
         return nil
-    }
-
-    private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
-        if event.keyCode == TakeoverKeymap.escapeKeyCode {
-            onCancel()
-            return nil
-        }
-        // Swallow stray keys aimed at wallpaper windows (no responder
-        // handles them; they would just beep).
-        if let window = event.window as? WallpaperWindow,
-           windows.contains(where: { $0 === window }) {
-            return nil
-        }
-        return event
     }
 }

@@ -1,10 +1,30 @@
 import AppKit
 
 /// Borderless desktop-level wallpaper window. Refuses key status except
-/// during a takeover session, when it must receive the keyboard.
+/// during a takeover session or tile selection, when it must receive the
+/// keyboard.
 final class WallpaperWindow: NSWindow {
     var allowKey = false
+
+    /// Key events are consumed here, in the responder chain, rather than
+    /// swallowed by an event monitor: NSWindow's default keyDown path plays
+    /// the system alert for every press it considers unhandled, monitor or
+    /// not. Return true when the event was consumed.
+    var keyEventHandler: ((NSEvent) -> Bool)?
+
     override var canBecomeKey: Bool { allowKey }
+
+    override func keyDown(with event: NSEvent) {
+        if keyEventHandler?(event) != true { super.keyDown(with: event) }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if keyEventHandler?(event) != true { super.keyUp(with: event) }
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        if keyEventHandler?(event) != true { super.flagsChanged(with: event) }
+    }
 }
 
 /// Keyboard layout for live play: arrows = D-pad, X = A, Z = B,
@@ -39,7 +59,6 @@ final class TakeoverSession {
     private let tile: TileProcess
     private let savedLevel: NSWindow.Level
     private let savedIgnoresMouse: Bool
-    private var monitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var heldButtons: NESButtons = []
     /// Asks the controller to tear the session down (idempotent); fired by
@@ -65,10 +84,8 @@ final class TakeoverSession {
         window.ignoresMouseEvents = false
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-
-        monitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
-            self?.handle(event) ?? event
+        window.keyEventHandler = { [weak self] event in
+            self?.handle(event) ?? false
         }
         // Focus moving anywhere else ends the session rather than leaving a
         // raised wallpaper window that no longer hears the keyboard.
@@ -83,8 +100,7 @@ final class TakeoverSession {
     func stop() {
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
+        window.keyEventHandler = nil
         tile.sendInput([])
         tile.endTakeover() // a looped movie restarts from frame 0
         window.level = savedLevel
@@ -95,30 +111,26 @@ final class TakeoverSession {
         NSApp.deactivate()
     }
 
-    private func handle(_ event: NSEvent) -> NSEvent? {
-        // Only capture keys aimed at the raised wallpaper window; the app's
-        // regular windows (Settings, browser) keep normal key handling.
-        guard event.window === window else { return event }
+    private func handle(_ event: NSEvent) -> Bool {
         switch event.type {
         case .keyDown where event.keyCode == TakeoverKeymap.escapeKeyCode:
             requestEnd()
-            return nil
-        case .keyUp where event.keyCode == TakeoverKeymap.escapeKeyCode:
-            return nil
+            return true
         case .keyDown, .keyUp:
-            guard let button = TakeoverKeymap.button(for: event.keyCode) else {
-                return event
+            if let button = TakeoverKeymap.button(for: event.keyCode) {
+                // Held buttons are level-based from keyDown/keyUp pairs;
+                // auto-repeats are consumed without resending.
+                if event.type == .keyUp {
+                    heldButtons.remove(button)
+                    tile.sendInput(heldButtons)
+                } else if !event.isARepeat {
+                    heldButtons.insert(button)
+                    tile.sendInput(heldButtons)
+                }
             }
-            // Held buttons are level-based from keyDown/keyUp pairs; auto-
-            // repeats are swallowed without resending.
-            if event.type == .keyUp {
-                heldButtons.remove(button)
-                tile.sendInput(heldButtons)
-            } else if !event.isARepeat {
-                heldButtons.insert(button)
-                tile.sendInput(heldButtons)
-            }
-            return nil
+            // The game owns the keyboard while playing: consume unmapped
+            // keys too instead of letting them fall through and beep.
+            return true
         case .flagsChanged where event.keyCode == TakeoverKeymap.rightShiftKeyCode:
             if event.modifierFlags.contains(.shift) {
                 heldButtons.insert(.select)
@@ -126,9 +138,9 @@ final class TakeoverSession {
                 heldButtons.remove(.select)
             }
             tile.sendInput(heldButtons)
-            return nil
+            return true
         default:
-            return event
+            return false
         }
     }
 }
