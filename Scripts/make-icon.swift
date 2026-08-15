@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+// SPDX-License-Identifier: GPL-2.0-only
+
 // Renders the app icon from source artwork: scales the (square, full-bleed)
 // logo into the standard macOS icon shape — an 824/1024 rounded rect centered
 // on a transparent 1024 canvas — at every size an .iconset needs.

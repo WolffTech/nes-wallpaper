@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+// SPDX-License-Identifier: GPL-2.0-only
+
 import Foundation
 
 /// Parsed header of an FM2 (FCEUX) movie file.

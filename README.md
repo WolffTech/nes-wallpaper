@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech> -->
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # NES Wallpaper
 
 A modern macOS recreation of the 2016 UberNES "Nintendo Saver": a live desktop wallpaper that tiles NES games playing back tool-assisted speedrun (TAS) movies, rendered behind your desktop icons.
@@ -62,7 +65,7 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-The Release workflow runs the tests and smoke test, builds the app with a Developer ID identity, notarizes and staples it, and attaches `NES-Wallpaper-<version>.zip` to a GitHub release. `CFBundleShortVersionString` comes from the tag and `CFBundleVersion` is the commit count on it. Creating the release in the GitHub UI (with a new `v*` tag) works too: the workflow attaches the zip to the release you wrote instead of generating one.
+The Release workflow runs the tests and smoke test, builds the app with a Developer ID identity, notarizes and staples it, and attaches `NES-Wallpaper-<version>.zip` plus the exact corresponding `NES-Wallpaper-<version>-source.zip` to a GitHub release. `CFBundleShortVersionString` comes from the tag and `CFBundleVersion` is the commit count on it. Creating the release in the GitHub UI (with a new `v*` tag) works too: the workflow attaches the archives to the release you wrote instead of generating one.
 
 One-time setup — repository secrets (Settings → Secrets and variables → Actions):
 
@@ -73,6 +76,18 @@ One-time setup — repository secrets (Settings → Secrets and variables → Ac
 - `NOTARY_KEY_ID` / `NOTARY_ISSUER_ID` — the key's ID and issuer ID
 
 Local releases work without any of that: `./Scripts/notarize.sh` uses the keychain certificate and a `notarytool` keychain profile (see the script header for the one-time `store-credentials` setup). The Test Build workflow (manual dispatch) remains the quick path to an unsigned, ad-hoc build of any branch.
+
+## License
+
+Copyright (C) 2026 Nick Wolff <nick@wolff.tech>.
+
+NES Wallpaper is free software licensed under the GNU General Public License,
+version 2 only (`GPL-2.0-only`). It is distributed without any warranty; see
+[`LICENSE`](LICENSE) for the complete terms. FCEUX and the other incorporated
+components remain copyright their respective authors; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for attribution and their
+license notices. Official binary releases provide their exact corresponding
+source as described in [`SOURCE.md`](SOURCE.md).
 
 ## Screensaver
 

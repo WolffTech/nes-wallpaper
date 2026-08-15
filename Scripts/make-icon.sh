@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+# SPDX-License-Identifier: GPL-2.0-only
+
 # Builds Assets/AppIcon.icns from the source logo. The logo itself is
 # read-only input and is never modified. Safe to run from any cwd.
 set -euo pipefail

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+// SPDX-License-Identifier: GPL-2.0-only
+
 import Foundation
 
 /// CPU video filters run inside each nes-helper via FCEUX's vidblit

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+# SPDX-License-Identifier: GPL-2.0-only
+
 # Assembles a distributable "NES Wallpaper.app" bundle from the SwiftPM
 # release products. Safe to run from any cwd.
 #
@@ -71,6 +74,10 @@ if [[ ! -f "$ICNS" ]]; then
 fi
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp "$REPO_ROOT/LICENSE" "$APP_DIR/Contents/Resources/LICENSE"
+cp "$REPO_ROOT/SOURCE.md" "$APP_DIR/Contents/Resources/SOURCE.md"
+cp "$REPO_ROOT/THIRD_PARTY_NOTICES.md" "$APP_DIR/Contents/Resources/THIRD_PARTY_NOTICES.md"
+cp -R "$REPO_ROOT/ThirdPartyLicenses" "$APP_DIR/Contents/Resources/ThirdPartyLicenses"
 
 # Screensaver plugin: the SwiftPM dylib wrapped in the .saver bundle
 # structure legacyScreenSaver expects. Shipped inside the app's Resources;
