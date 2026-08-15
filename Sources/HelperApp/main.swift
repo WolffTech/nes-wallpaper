@@ -10,6 +10,12 @@ import CShm
 // 30 fps in Low Power Mode. Quits on SIGTERM/SIGINT, stdin "quit"/EOF, or orphaning.
 // --start-frame fast-forwards the movie (unpaced, render skipped) so the
 // tile starts mid-game, like the original saver's checkpoints.
+//
+// stdin is the control channel, one command per line: quit, pause, resume,
+// low-power, normal-power, takeover, release, and "input <hex>" (pad-0 button
+// byte). "takeover" stops movie playback in place — game state is preserved
+// and the live pad drives the game from the next frame; "release" hands the
+// tile back (the movie restarts from frame 0 when --loop is set).
 
 func log(_ msg: String) {
     FileHandle.standardError.write("nes-helper[\(getpid())]: \(msg)\n".data(using: .utf8)!)
@@ -68,6 +74,8 @@ let stateCondition = NSCondition()
 var wantQuit = false
 var paused = false
 var lowPowerMode = initialLowPowerMode
+var takenOver = false
+var padButtons: UInt8 = 0
 
 func setQuit() {
     stateCondition.lock()
@@ -87,9 +95,21 @@ func setLowPowerMode(_ value: Bool) {
     stateCondition.broadcast()
     stateCondition.unlock()
 }
-func readState() -> (quit: Bool, paused: Bool, lowPower: Bool) {
+func setTakenOver(_ value: Bool) {
+    stateCondition.lock()
+    takenOver = value
+    if !value { padButtons = 0 }
+    stateCondition.broadcast()
+    stateCondition.unlock()
+}
+func setPadButtons(_ value: UInt8) {
+    stateCondition.lock()
+    padButtons = value
+    stateCondition.unlock()
+}
+func readState() -> (quit: Bool, paused: Bool, lowPower: Bool, takenOver: Bool, pad: UInt8) {
     stateCondition.lock(); defer { stateCondition.unlock() }
-    return (wantQuit, paused, lowPowerMode)
+    return (wantQuit, paused, lowPowerMode, takenOver, padButtons)
 }
 func waitUntilRunnable() -> (quit: Bool, resumed: Bool) {
     stateCondition.lock(); defer { stateCondition.unlock() }
@@ -182,13 +202,23 @@ intSource.resume()
 
 Thread.detachNewThread {
     while let line = readLine(strippingNewline: true) {
-        switch line.trimmingCharacters(in: .whitespaces) {
+        let command = line.trimmingCharacters(in: .whitespaces)
+        switch command {
         case "quit": log("stdin quit"); setQuit(); return
         case "pause": log("paused"); setPaused(true)
         case "resume": log("resumed"); setPaused(false)
         case "low-power": log("low-power mode"); setLowPowerMode(true)
         case "normal-power": log("normal-power mode"); setLowPowerMode(false)
-        default: break
+        case "takeover": log("takeover requested"); setTakenOver(true)
+        case "release": log("release requested"); setTakenOver(false)
+        default:
+            // "input <hex>": pad-0 button byte, applied by the emulation
+            // loop each tick while taken over. FCEUX calls stay on the
+            // emulation thread; this thread only updates shared state.
+            if command.hasPrefix("input "),
+               let buttons = UInt8(command.dropFirst(6), radix: 16) {
+                setPadButtons(buttons)
+            }
         }
     }
     log("stdin EOF")
@@ -223,6 +253,8 @@ var emulatedFrameCount: UInt64 = 0
 var publishedFrameCount: UInt32 = 0
 var lastPpidCheck = scheduleStart
 var movieEnded = false
+var liveInputActive = false
+var takeoverAudio: TakeoverAudio?
 
 emulation: while true {
     let permission = waitUntilRunnable()
@@ -253,11 +285,44 @@ emulation: while true {
     if state.quit { break emulation }
     if state.paused { continue }
 
-    applyAnchorIfDue()
+    // Takeover: stop movie playback in place. The core preserves console
+    // state and reads the live joypad from the next frame. All FCEUX calls
+    // happen here, on the emulation thread; stdin only flips the flag.
+    if state.takenOver != liveInputActive {
+        liveInputActive = state.takenOver
+        if liveInputActive {
+            fceux_stop_movie()
+            // The wallpaper is silent; live play gets sound. Rate 0 -> 44100
+            // at runtime is the same path the Qt frontend uses.
+            fceux_set_sound_rate(Int32(TakeoverAudio.sampleRate))
+            takeoverAudio = TakeoverAudio()
+            if takeoverAudio == nil {
+                fceux_set_sound_rate(0)
+                log("audio output unavailable; playing silently")
+            }
+            log("takeover: movie stopped, live input active")
+        } else {
+            fceux_set_joypad(0, 0)
+            fceux_set_sound_rate(0)
+            takeoverAudio?.stop()
+            takeoverAudio = nil
+            log("released" + (moviePath != nil && loopMovie ? ", movie will restart" : ""))
+        }
+    }
+
+    if liveInputActive {
+        fceux_set_joypad(0, state.pad)
+    } else {
+        // Anchors key off the global frame counter, which keeps counting
+        // after the movie stops — never apply them while taken over.
+        applyAnchorIfDue()
+    }
 
     // Low Power Mode preserves every emulated frame (and therefore TAS and
-    // game timing) but converts and publishes only alternate frames.
-    let shouldPublish = !state.lowPower || emulatedFrameCount.isMultiple(of: 2)
+    // game timing) but converts and publishes only alternate frames. A
+    // taken-over tile always publishes at full rate for input latency.
+    let shouldPublish = !state.lowPower || liveInputActive
+        || emulatedFrameCount.isMultiple(of: 2)
     if shouldPublish {
         let back = 1 - nes_shm_load(&shm.pointee.front)
         guard fceux_run_frame_into(
@@ -275,7 +340,20 @@ emulation: while true {
     }
     emulatedFrameCount &+= 1
 
-    if let moviePath, !movieEnded, fceux_movie_is_playing() == 0 {
+    // Drain this frame's sound into the audio queue's ring; the core's
+    // buffer is overwritten by the next emulated frame.
+    if let takeoverAudio {
+        var samples: UnsafePointer<Int32>?
+        let sampleCount = fceux_sound_samples(&samples)
+        if sampleCount > 0, let samples {
+            takeoverAudio.append(samples, count: Int(sampleCount))
+        }
+    }
+
+    // Skipped while taken over (stopping the movie is what takeover does);
+    // after a release this is also the path that hands the tile back by
+    // restarting the looped movie from frame 0.
+    if let moviePath, !movieEnded, !liveInputActive, fceux_movie_is_playing() == 0 {
         if loopMovie {
             if fceux_load_movie(moviePath) != 0, fceux_movie_is_playing() != 0 {
                 log("movie finished, restarting")
@@ -291,5 +369,6 @@ emulation: while true {
     }
 }
 
+takeoverAudio?.stop()
 nes_shm_close(shm, shmName, 1)
 log("exiting")

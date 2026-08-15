@@ -26,9 +26,10 @@ vertex VOut tileVertex(uint vid [[vertex_id]],
 
 fragment float4 tileFragment(VOut in [[stage_in]],
                              texture2d<float> tex [[texture(0)]],
-                             sampler s [[sampler(0)]]) {
+                             sampler s [[sampler(0)]],
+                             constant float &brightness [[buffer(0)]]) {
     // Force opaque: the NTSC filter writes 0 into the X byte.
-    return float4(tex.sample(s, in.uv).rgb, 1.0);
+    return float4(tex.sample(s, in.uv).rgb * brightness, 1.0);
 }
 """
 
@@ -148,6 +149,19 @@ public final class TileGridRenderer {
     private var lastDrawnSize = CGSize.zero
     private var needsPresent = false
 
+    /// Visual emphasis for tile selection and live play.
+    public enum Emphasis: Equatable {
+        /// Normal wallpaper: every tile at full brightness.
+        case none
+        /// Dim every tile except this one (by controller tile index);
+        /// nil dims the whole grid, e.g. selection mode with no hover.
+        case spotlight(Int?)
+    }
+
+    public var emphasis: Emphasis = .none {
+        didSet { needsPresent = needsPresent || emphasis != oldValue }
+    }
+
     public init(context: MetalContext, view: WallpaperMetalView,
          columns: Int, rows: Int, tileWidth: Int, tileHeight: Int) throws {
         self.context = context
@@ -243,6 +257,12 @@ public final class TileGridRenderer {
                 Float(2 * width / drawableWidth),
                 Float(2 * height / drawableHeight))
             encoder.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
+            var brightness: Float
+            switch emphasis {
+            case .none: brightness = 1
+            case .spotlight(let tile): brightness = tile == index ? 1 : 0.35
+            }
+            encoder.setFragmentBytes(&brightness, length: MemoryLayout<Float>.size, index: 0)
             encoder.setFragmentTexture(texture, index: 0)
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         }
