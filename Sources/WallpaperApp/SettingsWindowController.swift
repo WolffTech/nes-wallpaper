@@ -252,8 +252,7 @@ struct SettingsView: View {
             }
             Section {
                 LabeledContent {
-                    Button(saverInstall.installed
-                        ? "Reinstall\u{2026}" : "Install\u{2026}") {
+                    Button(saverInstall.installed ? "Reinstall" : "Install") {
                         saverInstall.install()
                     }
                     .disabled(!saverInstall.available)
@@ -285,7 +284,7 @@ struct SettingsView: View {
     private func folderRow(title: String, path: String?,
                            onChoose: @escaping (String) -> Void) -> some View {
         LabeledContent {
-            Button("Choose…") {
+            Button("Choose") {
                 if let picked = Self.chooseFolder(title: "Choose \(title)", current: path) {
                     onChoose(picked)
                 }

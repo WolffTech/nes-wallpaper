@@ -68,7 +68,7 @@ struct TASBrowserView: View {
                     }
                 }
             default:
-                centered { ProgressView("Loading TASVideos catalog…") }
+                centered { ProgressView("Loading TASVideos catalog") }
             }
         } else {
             List(model.filtered) { publication in
