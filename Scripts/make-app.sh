@@ -20,6 +20,7 @@ APP_NAME="NES Wallpaper"
 DIST_DIR="$REPO_ROOT/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 ICNS="$REPO_ROOT/Assets/AppIcon.icns"
+ICON_ASSET_CAR="$REPO_ROOT/Assets/AppIconAssets.car"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 APP_VERSION="${APP_VERSION:-}"
 BUILD_NUMBER="${BUILD_NUMBER:-}"
@@ -69,11 +70,12 @@ if [[ -n "$BUILD_NUMBER" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_PLIST"
 fi
 
-if [[ ! -f "$ICNS" ]]; then
+if [[ ! -f "$ICNS" || ! -f "$ICON_ASSET_CAR" ]]; then
     "$SCRIPT_DIR/make-icon.sh"
 fi
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp "$ICON_ASSET_CAR" "$APP_DIR/Contents/Resources/Assets.car"
 cp "$REPO_ROOT/LICENSE" "$APP_DIR/Contents/Resources/LICENSE"
 cp "$REPO_ROOT/SOURCE.md" "$APP_DIR/Contents/Resources/SOURCE.md"
 cp "$REPO_ROOT/THIRD_PARTY_NOTICES.md" "$APP_DIR/Contents/Resources/THIRD_PARTY_NOTICES.md"
