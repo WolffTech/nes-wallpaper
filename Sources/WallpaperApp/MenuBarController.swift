@@ -100,25 +100,25 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         pauseItem.action = #selector(togglePause)
         menu.addItem(pauseItem)
 
+        takeoverItem.target = self
+        menu.addItem(takeoverItem)
+
+        menu.addItem(.separator())
+        let browserItem = NSMenuItem(title: "Browse TASVideos",
+                                     action: #selector(openBrowser), keyEquivalent: "")
+        browserItem.target = self
+        menu.addItem(browserItem)
+
+        menu.addItem(.separator())
         lowPowerItem.title = "Low Power Mode"
         lowPowerItem.target = self
         lowPowerItem.action = #selector(toggleLowPowerMode)
         menu.addItem(lowPowerItem)
 
-        menu.addItem(.separator())
-        takeoverItem.target = self
-        menu.addItem(takeoverItem)
-
-        menu.addItem(.separator())
-        let settingsItem = NSMenuItem(title: "Settings…",
+        let settingsItem = NSMenuItem(title: "Settings",
                                       action: #selector(openSettings), keyEquivalent: "")
         settingsItem.target = self
         menu.addItem(settingsItem)
-
-        let browserItem = NSMenuItem(title: "Browse TASVideos…",
-                                     action: #selector(openBrowser), keyEquivalent: "")
-        browserItem.target = self
-        menu.addItem(browserItem)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit",
@@ -172,7 +172,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         let submenu = NSMenu()
         submenu.autoenablesItems = false
-        let clickItem = NSMenuItem(title: "Click a Game on Screen…",
+        let clickItem = NSMenuItem(title: "Click a Game on Screen",
                                    action: #selector(selectGameByClicking), keyEquivalent: "")
         clickItem.target = self
         submenu.addItem(clickItem)

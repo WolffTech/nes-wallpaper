@@ -141,14 +141,14 @@ final class FCEUXOutputTests: XCTestCase {
         // nestest.fm2 presses nothing until it hits Start at frame ~124, so
         // frame 60 is the static menu with no movie input involved yet.
 
-        // Playback with no live input…
+        // Capture playback with no live input.
         XCTAssertNotEqual(fceux_load_movie(movie.path), 0)
         XCTAssertNotEqual(fceux_movie_is_playing(), 0)
         fceux_set_joypad(0, 0)
         for _ in 0..<59 { _ = fceux_run_frame(2) }
         let playbackClean = try renderFrame()
 
-        // …must be identical to playback with every live button held down:
+        // It must be identical to playback with every live button held down:
         // movie playback skips the driver input poll completely.
         XCTAssertNotEqual(fceux_load_movie(movie.path), 0) // power-cycle to frame 0
         fceux_set_joypad(0, 0xFF)
@@ -163,11 +163,11 @@ final class FCEUXOutputTests: XCTestCase {
         XCTAssertEqual(fceux_movie_is_playing(), 0)
         let takeoverState = try saveState()
 
-        // With no input the menu sits still…
+        // With no input, the menu sits still.
         for _ in 0..<60 { _ = fceux_run_frame(2) }
         let idle = try renderFrame()
 
-        // …but from the same point, holding Start launches nestest's tests.
+        // From the same point, holding Start launches nestest's tests.
         loadState(takeoverState)
         fceux_set_joypad(0, 0x08) // Start
         for _ in 0..<60 { _ = fceux_run_frame(2) }
