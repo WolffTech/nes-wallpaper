@@ -30,3 +30,38 @@ jobs:
 
       - name: Run tests
         run: swift test
+
+  package:
+    name: Package and smoke test
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Assemble ad-hoc signed app
+        run: ./Scripts/make-app.sh
+
+      - name: Run emulator smoke test
+        run: |
+          BIN_PATH="$(swift build -c release --show-bin-path)"
+          FRAME_DIR="$RUNNER_TEMP/nes-wallpaper-frames"
+          "$BIN_PATH/nes-headless" \
+            TestData/nestest.nes \
+            --frames 60 \
+            --dump-every 60 \
+            --out "$FRAME_DIR"
+          test -n "$(find "$FRAME_DIR" -name '*.png' -print -quit)"
+
+      - name: Verify app bundle
+        run: |
+          APP_PATH="dist/NES Wallpaper.app"
+          test -x "$APP_PATH/Contents/MacOS/NESWallpaper"
+          test -x "$APP_PATH/Contents/MacOS/nes-helper"
+          codesign --verify --strict --deep "$APP_PATH"
