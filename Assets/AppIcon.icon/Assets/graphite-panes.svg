@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+  SPDX-License-Identifier: GPL-2.0-only
+
+  Flat source artwork for Icon Composer. Optical effects belong in the
+  AppIcon.icon document, not in this SVG.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <path fill="#20232B" d="M242 154h206a50 50 0 0 1 50 50v244a50 50 0 0 1-50 50H204a50 50 0 0 1-50-50V242a88 88 0 0 1 88-88Z"/>
+  <path fill="#20232B" d="M576 154h206a88 88 0 0 1 88 88v206a50 50 0 0 1-50 50H576a50 50 0 0 1-50-50V204a50 50 0 0 1 50-50Z"/>
+  <path fill="#20232B" d="M204 526h244a50 50 0 0 1 50 50v244a50 50 0 0 1-50 50H242a88 88 0 0 1-88-88V576a50 50 0 0 1 50-50Z"/>
+</svg>

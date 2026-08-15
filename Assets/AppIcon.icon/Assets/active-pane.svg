@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
+  SPDX-License-Identifier: GPL-2.0-only
+
+  The lower-right pane represents the live game selected for takeover.
+  Flat source artwork for Icon Composer; effects are applied there.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <path fill="#E4312B" d="M576 526h244a50 50 0 0 1 50 50v206a88 88 0 0 1-88 88H576a50 50 0 0 1-50-50V576a50 50 0 0 1 50-50Z"/>
+</svg>
