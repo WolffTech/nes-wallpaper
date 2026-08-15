@@ -100,12 +100,20 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "NES Wallpaper $APP_VERSION" \
-            --generate-notes \
-            --verify-tag \
-            "dist/NES-Wallpaper-$APP_VERSION.zip"
+          ZIP="dist/NES-Wallpaper-$APP_VERSION.zip"
+          # A tag created through the GitHub release UI already has a release;
+          # attach the zip to it. A plain pushed tag gets a new release.
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "NES Wallpaper $APP_VERSION" \
+              --generate-notes \
+              --verify-tag \
+              "$ZIP"
+          fi
 
       - name: Remove signing keychain
         if: always()

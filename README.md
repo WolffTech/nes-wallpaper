@@ -62,7 +62,7 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-The Release workflow runs the tests and smoke test, builds the app with a Developer ID identity, notarizes and staples it, and attaches `NES-Wallpaper-<version>.zip` to a GitHub release. `CFBundleShortVersionString` comes from the tag and `CFBundleVersion` is the commit count on it.
+The Release workflow runs the tests and smoke test, builds the app with a Developer ID identity, notarizes and staples it, and attaches `NES-Wallpaper-<version>.zip` to a GitHub release. `CFBundleShortVersionString` comes from the tag and `CFBundleVersion` is the commit count on it. Creating the release in the GitHub UI (with a new `v*` tag) works too: the workflow attaches the zip to the release you wrote instead of generating one.
 
 One-time setup — repository secrets (Settings → Secrets and variables → Actions):
 
