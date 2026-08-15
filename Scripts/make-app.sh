@@ -2,6 +2,8 @@
 # Assembles a distributable "NES Wallpaper.app" bundle from the SwiftPM
 # release products. Safe to run from any cwd.
 #
+# APP_VERSION overrides CFBundleShortVersionString in both bundles.
+# BUILD_NUMBER overrides CFBundleVersion in both bundles.
 # CODESIGN_IDENTITY selects the signing identity (default "-", ad hoc).
 # A real identity, e.g. "Developer ID Application: Name (TEAMID)", also
 # enables the hardened runtime and a secure timestamp, as notarization
@@ -16,6 +18,17 @@ DIST_DIR="$REPO_ROOT/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 ICNS="$REPO_ROOT/Assets/AppIcon.icns"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+APP_VERSION="${APP_VERSION:-}"
+BUILD_NUMBER="${BUILD_NUMBER:-}"
+
+if [[ -n "$APP_VERSION" && ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+    echo "error: APP_VERSION must be a semantic version (received: $APP_VERSION)" >&2
+    exit 1
+fi
+if [[ -n "$BUILD_NUMBER" && ! "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: BUILD_NUMBER must be a positive integer (received: $BUILD_NUMBER)" >&2
+    exit 1
+fi
 
 echo "==> Building (release)"
 swift build --package-path "$REPO_ROOT" -c release
@@ -45,6 +58,14 @@ cp "$HELPER_BIN" "$APP_DIR/Contents/MacOS/nes-helper"
 cp "$SCRIPT_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
 printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
 
+APP_PLIST="$APP_DIR/Contents/Info.plist"
+if [[ -n "$APP_VERSION" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP_PLIST"
+fi
+if [[ -n "$BUILD_NUMBER" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_PLIST"
+fi
+
 if [[ ! -f "$ICNS" ]]; then
     "$SCRIPT_DIR/make-icon.sh"
 fi
@@ -59,6 +80,14 @@ echo "==> Assembling $SAVER_DIR"
 mkdir -p "$SAVER_DIR/Contents/MacOS"
 cp "$SAVER_DYLIB" "$SAVER_DIR/Contents/MacOS/NESWallpaperSaver"
 cp "$SCRIPT_DIR/Saver-Info.plist" "$SAVER_DIR/Contents/Info.plist"
+
+SAVER_PLIST="$SAVER_DIR/Contents/Info.plist"
+if [[ -n "$APP_VERSION" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$SAVER_PLIST"
+fi
+if [[ -n "$BUILD_NUMBER" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$SAVER_PLIST"
+fi
 
 if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
     echo "==> Codesigning (ad hoc)"

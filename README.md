@@ -42,6 +42,13 @@ Low Power Mode is available from the menu-bar icon (and as `--low-power` in CLI 
 open "dist/NES Wallpaper.app"
 ```
 
+Release builds can override the bundle versions without editing the source
+plists. The app and bundled screensaver always receive the same values:
+
+```sh
+APP_VERSION=0.3.0 BUILD_NUMBER=42 ./Scripts/make-app.sh
+```
+
 The app lives in the menu bar (no Dock icon). Its menu includes Pause and Low Power Mode controls. Settings… has three tabs: Library (folders and matching), Display (grid, video filter, rotation) and General (launch at login, screensaver). Pick your ROM and movie folders under Library, and the wallpaper starts automatically each time the app launches after that. Turn on Launch at Login under General to have it start with your Mac (it registers with `SMAppService`, so it also appears under System Settings → General → Login Items). It pauses emulation while the screen is locked or the desktop is fully covered, and rotates tiles to new games over time. ROMs with no matching movie join the rotation too, playing their title or attract screen with no input (toggleable in Settings).
 
 Browse TASVideos… lists every current NES publication in FM2 format straight from the [tasvideos.org API](https://tasvideos.org/api) and downloads runs into your movies folder. Each row shows whether a matching ROM (by the checksum in the movie's header) is already in your ROM folder; new movies are picked up the next time the wallpaper starts.
