@@ -74,6 +74,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let startStopItem = NSMenuItem()
     private let pauseItem = NSMenuItem()
     private let lowPowerItem = NSMenuItem()
+    private let takeoverItem = NSMenuItem()
 
     override init() {
         super.init()
@@ -103,6 +104,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         lowPowerItem.target = self
         lowPowerItem.action = #selector(toggleLowPowerMode)
         menu.addItem(lowPowerItem)
+
+        menu.addItem(.separator())
+        takeoverItem.target = self
+        menu.addItem(takeoverItem)
 
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…",
@@ -137,6 +142,47 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         pauseItem.title = userWantsPause ? "Resume" : "Pause"
         pauseItem.isEnabled = controller != nil
         lowPowerItem.state = WallpaperSettings.load().lowPowerMode ? .on : .off
+        refreshTakeoverItem()
+    }
+
+    /// "Take Over Game ▸" submenu of the games on the grid, or a plain
+    /// "Stop Playing <game>" item while a session is running.
+    private func refreshTakeoverItem() {
+        if let title = controller?.takeoverGameTitle {
+            takeoverItem.title = "Stop Playing \(title)"
+            takeoverItem.submenu = nil
+            takeoverItem.action = #selector(stopTakeover)
+            takeoverItem.isEnabled = true
+            return
+        }
+        takeoverItem.title = "Take Over Game"
+        takeoverItem.action = nil
+        guard let controller, !userWantsPause else {
+            takeoverItem.submenu = nil
+            takeoverItem.isEnabled = false
+            return
+        }
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        for game in controller.currentGames() {
+            let item = NSMenuItem(title: game.title,
+                                  action: #selector(takeOverGame(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = game.tileIndex
+            submenu.addItem(item)
+        }
+        takeoverItem.submenu = submenu
+        takeoverItem.isEnabled = !submenu.items.isEmpty
+    }
+
+    @objc private func takeOverGame(_ sender: NSMenuItem) {
+        controller?.beginTakeover(tileIndex: sender.tag)
+        refreshMenuTitles()
+    }
+
+    @objc private func stopTakeover() {
+        controller?.endTakeover()
+        refreshMenuTitles()
     }
 
     @objc private func toggleWallpaper() {
@@ -236,6 +282,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 filter: settings.videoFilter,
                 lowPowerMode: settings.lowPowerMode)
             controller.userPaused = userWantsPause
+            controller.onTakeoverEnded = { [weak self] in self?.refreshMenuTitles() }
             self.controller = controller
         } catch {
             log("\(error)")

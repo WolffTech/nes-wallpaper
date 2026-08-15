@@ -71,7 +71,7 @@ public final class WallpaperController {
     /// Everything tied to one display's wallpaper window, so displays can be
     /// added and removed as a unit on hot-plug.
     private struct ScreenSlot {
-        let window: NSWindow
+        let window: WallpaperWindow
         let view: WallpaperMetalView
         let screenNumber: NSNumber?
         let renderer: TileGridRenderer
@@ -129,6 +129,14 @@ public final class WallpaperController {
     public var userPaused = false {
         didSet { updatePauseState() }
     }
+
+    /// The active live-play session, at most one. The session tile is
+    /// excluded from rotation and pause while the user is playing it.
+    private var takeoverSession: TakeoverSession?
+
+    /// Fired on the main queue whenever a session ends, however it ends,
+    /// so the menu can drop its "Stop Playing" state.
+    public var onTakeoverEnded: (() -> Void)?
 
     /// Adapts a fixed rom/movie list to a cycling tile source, no rotation.
     public convenience init(pairs: [(rom: String, movie: String?)], columns: Int, rows: Int,
@@ -236,6 +244,7 @@ public final class WallpaperController {
         pauseObservers.append(distributed.addObserver(
             forName: Notification.Name("com.apple.screenIsLocked"),
             object: nil, queue: .main) { [weak self] _ in
+            self?.endTakeover() // don't leave a raised, keyboard-grabbing window
             self?.screenLocked = true
             self?.updatePauseState()
         })
@@ -325,7 +334,10 @@ public final class WallpaperController {
         Self.log(shouldPause
             ? "pausing emulation (user=\(userPaused) locked=\(screenLocked) occluded=\(allOccluded))"
             : "resuming emulation\(saverWatching ? " (screensaver watching)" : "")")
-        for tile in tiles {
+        for (index, tile) in tiles.enumerated() {
+            // Never pause the tile the user is playing live; sessions end on
+            // screen lock, so this only bypasses user pause and occlusion.
+            if index == takeoverSession?.tileIndex { continue }
             shouldPause ? tile.pause() : tile.resume()
         }
     }
@@ -346,6 +358,61 @@ public final class WallpaperController {
         }
     }
 
+    // MARK: Live-play takeover
+
+    /// The games currently on the grid, in tile order, for the
+    /// "Take Over Game" menu.
+    public func currentGames() -> [(tileIndex: Int, title: String)] {
+        tileSpecs.enumerated().map { ($0, Self.gameTitle(for: $1)) }
+    }
+
+    /// Title of the game being played live, nil when no session is active.
+    public var takeoverGameTitle: String? {
+        takeoverSession.map { Self.gameTitle(for: tileSpecs[$0.tileIndex]) }
+    }
+
+    private static func gameTitle(for spec: TileSpec) -> String {
+        URL(fileURLWithPath: spec.rom).deletingPathExtension().lastPathComponent
+    }
+
+    /// Start live play on one tile: the wallpaper window on the display
+    /// under the mouse is raised and captures the keyboard, and the tile's
+    /// helper switches from movie playback to the live pad. One session at
+    /// a time; no-op while emulation is paused.
+    public func beginTakeover(tileIndex: Int) {
+        guard takeoverSession == nil, tiles.indices.contains(tileIndex),
+              !emulationPaused else { return }
+        let mouse = NSEvent.mouseLocation
+        guard let slot = slots.first(where: { $0.window.frame.contains(mouse) })
+            ?? slots.first else { return }
+
+        let session = TakeoverSession(
+            tileIndex: tileIndex, tile: tiles[tileIndex], window: slot.window
+        ) { [weak self] in self?.endTakeover() }
+        takeoverSession = session
+        session.start()
+        // Present at full rate for input latency even in Low Power Mode;
+        // the helper already publishes every frame while taken over.
+        slot.displayLink.preferredFrameRateRange = CAFrameRateRange(
+            minimum: 60, maximum: 60, preferred: 60)
+        Self.log("takeover started on tile \(tileIndex) (\(tileSpecs[tileIndex].rom))")
+    }
+
+    /// End the active session, however it was triggered (menu, Esc, focus
+    /// loss, screen lock). Restores the window, then hands the tile back to
+    /// the wallpaper by rotating it to a fresh game; until the replacement
+    /// publishes, the released movie plays from its start.
+    public func endTakeover() {
+        guard let session = takeoverSession else { return }
+        takeoverSession = nil
+        session.stop()
+        for slot in slots { configureFrameRate(for: slot.displayLink) }
+        Self.log("takeover ended on tile \(session.tileIndex)")
+        onTakeoverEnded?()
+        rotateTile(at: session.tileIndex)
+        if emulationPaused { tiles[session.tileIndex].pause() }
+    }
+
     /// Republish the manifest whenever the set of frame files changes.
     private func writeManifest() {
         let manifest = SharedFrames.Manifest(
@@ -363,6 +430,12 @@ public final class WallpaperController {
     }
 
     public func shutdown() {
+        // Tear the session down without the usual end-of-session rotation:
+        // every helper is about to be terminated anyway.
+        if let session = takeoverSession {
+            takeoverSession = nil
+            session.stop()
+        }
         for slot in slots { removeSlot(slot) }
         slots.removeAll()
         rotationTimer?.invalidate()
@@ -412,6 +485,14 @@ public final class WallpaperController {
         let index = rotationIndex % tiles.count
         rotationIndex = (index + 1) % tiles.count
 
+        // The tile being played live is the user's; skip its turn.
+        guard index != takeoverSession?.tileIndex else { return }
+        rotateTile(at: index)
+    }
+
+    private func rotateTile(at index: Int) {
+        guard tiles.indices.contains(index), !rotationInProgress else { return }
+
         // Prefer a game that is entirely off-screen. If the library contains
         // exactly one game per tile, allow the target tile to keep its own
         // game rather than introducing a duplicate elsewhere. Only fall back
@@ -443,11 +524,19 @@ public final class WallpaperController {
                 live = replacement.frameCount > 0
             }
             DispatchQueue.main.async {
-                guard let self, self.rotationTimer != nil, index < self.tiles.count else {
+                // tiles empties on shutdown; a session-end rotation must
+                // complete even when the rotation timer was never created.
+                guard let self, index < self.tiles.count else {
                     replacement.terminate() // controller shut down mid-rotation
                     return
                 }
                 defer { self.rotationInProgress = false }
+                if index == self.takeoverSession?.tileIndex {
+                    // The user took this tile over while its replacement was
+                    // starting; never swap a tile out from under a session.
+                    replacement.terminate()
+                    return
+                }
                 guard live else {
                     Self.log("replacement helper for \(replacement.shmName) never published; keeping old tile")
                     replacement.terminate()
@@ -504,12 +593,17 @@ public final class WallpaperController {
             }
         }
         for slot in departed { removeSlot(slot) }
+        // A session whose raised window just left with its display is over.
+        if let session = takeoverSession,
+           !slots.contains(where: { $0.window === session.window }) {
+            endTakeover()
+        }
         // Displays coming or going changes what "all occluded" means.
         updatePauseState()
     }
 
-    private static func makeDesktopWindow(frame: NSRect) -> NSWindow {
-        let window = NSWindow(
+    private static func makeDesktopWindow(frame: NSRect) -> WallpaperWindow {
+        let window = WallpaperWindow(
             contentRect: frame,
             styleMask: .borderless,
             backing: .buffered,
