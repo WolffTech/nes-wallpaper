@@ -133,6 +133,11 @@ public final class WallpaperController {
         didSet { updatePauseState() }
     }
 
+    /// Keyboard layout handed to new takeover sessions. Settable while
+    /// running (a Controls change needs no restart); an active session
+    /// keeps the map it started with.
+    public var takeoverKeymap = TakeoverKeymap.standard
+
     /// The active live-play session, at most one. The session tile is
     /// excluded from rotation and pause while the user is playing it.
     private var takeoverSession: TakeoverSession?
@@ -433,7 +438,8 @@ public final class WallpaperController {
             ?? slots.first else { return }
 
         let session = TakeoverSession(
-            tileIndex: tileIndex, tile: tiles[tileIndex], window: slot.window
+            tileIndex: tileIndex, tile: tiles[tileIndex], window: slot.window,
+            keymap: takeoverKeymap
         ) { [weak self] in self?.endTakeover() }
         takeoverSession = session
         session.start()

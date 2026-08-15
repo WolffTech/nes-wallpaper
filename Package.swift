@@ -85,7 +85,7 @@ let package = Package(
         ),
         .testTarget(
             name: "NESWallpaperCoreTests",
-            dependencies: ["NESWallpaperCore", "CFCEUX"],
+            dependencies: ["NESWallpaperCore", "CFCEUX", "nes-wallpaper"],
             path: "Tests/NESWallpaperCoreTests"
         ),
     ],

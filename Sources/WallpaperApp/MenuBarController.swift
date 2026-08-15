@@ -15,6 +15,7 @@ struct WallpaperSettings {
     static let includeROMsWithoutMoviesKey = "IncludeROMsWithoutMovies"
     static let videoFilterKey = "VideoFilter"
     static let lowPowerModeKey = "LowPowerMode"
+    static let takeoverControlsKey = "TakeoverControls"
 
     var romsDir: String?
     var moviesDir: String?
@@ -24,6 +25,9 @@ struct WallpaperSettings {
     var includeROMsWithoutMovies: Bool
     var videoFilter: VideoFilter
     var lowPowerMode: Bool
+    /// Takeover key overrides, button name → keyCode; empty = all defaults
+    /// (see TakeoverKeymap.init(buttonAssignments:)).
+    var takeoverControls: [String: Int]
 
     var rotationInterval: TimeInterval? {
         rotationMinutes > 0 ? TimeInterval(rotationMinutes) * 60 : nil
@@ -41,7 +45,9 @@ struct WallpaperSettings {
                 forKey: includeROMsWithoutMoviesKey) as? Bool ?? true,
             videoFilter: VideoFilter(
                 rawValue: defaults.string(forKey: videoFilterKey) ?? "") ?? .none,
-            lowPowerMode: defaults.bool(forKey: lowPowerModeKey))
+            lowPowerMode: defaults.bool(forKey: lowPowerModeKey),
+            takeoverControls: defaults.dictionary(forKey: takeoverControlsKey)?
+                .compactMapValues { $0 as? Int } ?? [:])
     }
 
     func save() {
@@ -54,6 +60,7 @@ struct WallpaperSettings {
         defaults.set(includeROMsWithoutMovies, forKey: Self.includeROMsWithoutMoviesKey)
         defaults.set(videoFilter.rawValue, forKey: Self.videoFilterKey)
         defaults.set(lowPowerMode, forKey: Self.lowPowerModeKey)
+        defaults.set(takeoverControls, forKey: Self.takeoverControlsKey)
     }
 }
 
@@ -254,6 +261,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         startWallpaper(interactive: true)
     }
 
+    /// Called by the Controls tab after each saved key change: a keymap
+    /// swap needs no restart, only a fresh map for the next takeover (an
+    /// active session keeps the one it started with).
+    func controlsChanged() {
+        controller?.takeoverKeymap =
+            TakeoverKeymap(buttonAssignments: WallpaperSettings.load().takeoverControls)
+    }
+
     /// Build a tile source from the configured library: each tile plays a
     /// random pick from the library (same policy as the CLI's library mode).
     /// Returns nil when the folders are unset or yield nothing playable.
@@ -308,6 +323,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 filter: settings.videoFilter,
                 lowPowerMode: settings.lowPowerMode)
             controller.userPaused = userWantsPause
+            controller.takeoverKeymap =
+                TakeoverKeymap(buttonAssignments: settings.takeoverControls)
             controller.onTakeoverEnded = { [weak self] in self?.refreshMenuTitles() }
             self.controller = controller
         } catch {
