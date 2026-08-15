@@ -44,6 +44,22 @@ public final class MappedTile: TileFrameSource {
     }
 }
 
+/// NES controller button mask, matching the FM2/FCEUX bit order the helper
+/// passes straight to fceux_set_joypad.
+public struct NESButtons: OptionSet, Sendable {
+    public let rawValue: UInt8
+    public init(rawValue: UInt8) { self.rawValue = rawValue }
+
+    public static let a = NESButtons(rawValue: 1 << 0)
+    public static let b = NESButtons(rawValue: 1 << 1)
+    public static let select = NESButtons(rawValue: 1 << 2)
+    public static let start = NESButtons(rawValue: 1 << 3)
+    public static let up = NESButtons(rawValue: 1 << 4)
+    public static let down = NESButtons(rawValue: 1 << 5)
+    public static let left = NESButtons(rawValue: 1 << 6)
+    public static let right = NESButtons(rawValue: 1 << 7)
+}
+
 /// One wallpaper tile: a nes-helper child process publishing frames into a
 /// shared frame file (see SharedFrames), plus the app-side reader for it.
 public final class TileProcess: TileFrameSource {
@@ -122,6 +138,26 @@ public final class TileProcess: TileFrameSource {
     public func resume() { send("resume\n") }
     public func setLowPowerMode(_ enabled: Bool) {
         send(enabled ? "low-power\n" : "normal-power\n")
+    }
+
+    /// Whether the helper is still driven by its TAS movie, from the shm
+    /// header (false once taken over, or after a non-looped movie ends).
+    public var moviePlaying: Bool {
+        guard let shm else { return false }
+        return nes_shm_load(&shm.pointee.movie_playing) != 0
+    }
+
+    /// Stop movie playback in place; the live pad drives the game from the
+    /// next emulated frame.
+    public func beginTakeover() { send("takeover\n") }
+
+    /// End live play. The helper hands the tile back by restarting a looped
+    /// movie from frame 0; callers may prefer to rotate the tile instead.
+    public func endTakeover() { send("release\n") }
+
+    /// Held-button state for pad 0; send on change, not per frame.
+    public func sendInput(_ buttons: NESButtons) {
+        send(String(format: "input %02X\n", buttons.rawValue))
     }
 
     private func send(_ command: String) {

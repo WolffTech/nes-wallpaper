@@ -75,4 +75,66 @@ final class FCEUXOutputTests: XCTestCase {
         let renderedState = try saveState()
         XCTAssertEqual(noOutputState, renderedState)
     }
+
+    // The takeover primitive: while an FM2 movie plays, the live joypad is
+    // ignored entirely; fceux_stop_movie() preserves console state and the
+    // live joypad drives the game from the next frame.
+    func testStopMovieSwitchesToLiveJoypadInput() throws {
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fceux-takeover-tests.\(getpid())", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: support, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        XCTAssertNotEqual(fceux_init(support.path), 0)
+        let rom = testDataDirectory.appendingPathComponent("nestest.nes")
+        let movie = testDataDirectory.appendingPathComponent("nestest.fm2")
+        XCTAssertNotEqual(fceux_load_game(rom.path), 0)
+        defer { fceux_close_game() }
+        XCTAssertNotEqual(fceux_set_video_filter(0, 0), 0)
+
+        let byteCount = Int(fceux_frame_width()) * 4 * Int(fceux_frame_height())
+        func renderFrame() throws -> Data {
+            Data(bytes: try XCTUnwrap(fceux_run_frame(0)), count: byteCount)
+        }
+
+        // nestest.fm2 presses nothing until it hits Start at frame ~124, so
+        // frame 60 is the static menu with no movie input involved yet.
+
+        // Playback with no live input…
+        XCTAssertNotEqual(fceux_load_movie(movie.path), 0)
+        XCTAssertNotEqual(fceux_movie_is_playing(), 0)
+        fceux_set_joypad(0, 0)
+        for _ in 0..<59 { _ = fceux_run_frame(2) }
+        let playbackClean = try renderFrame()
+
+        // …must be identical to playback with every live button held down:
+        // movie playback skips the driver input poll completely.
+        XCTAssertNotEqual(fceux_load_movie(movie.path), 0) // power-cycle to frame 0
+        fceux_set_joypad(0, 0xFF)
+        for _ in 0..<59 { _ = fceux_run_frame(2) }
+        let playbackHeld = try renderFrame()
+        XCTAssertEqual(playbackClean, playbackHeld,
+                       "live joypad must be ignored during movie playback")
+
+        // Take over on the menu: stop the movie in place, no power-cycle.
+        fceux_set_joypad(0, 0)
+        fceux_stop_movie()
+        XCTAssertEqual(fceux_movie_is_playing(), 0)
+        let takeoverState = try saveState()
+
+        // With no input the menu sits still…
+        for _ in 0..<60 { _ = fceux_run_frame(2) }
+        let idle = try renderFrame()
+
+        // …but from the same point, holding Start launches nestest's tests.
+        loadState(takeoverState)
+        fceux_set_joypad(0, 0x08) // Start
+        for _ in 0..<60 { _ = fceux_run_frame(2) }
+        let started = try renderFrame()
+        fceux_set_joypad(0, 0)
+
+        XCTAssertNotEqual(idle, started,
+                          "live joypad must drive the game after fceux_stop_movie")
+    }
 }
