@@ -30,26 +30,6 @@ final class WallpaperWindow: NSWindow {
     }
 }
 
-/// Keyboard layout for live play: arrows = D-pad, X = A, Z = B,
-/// Return = Start, Right Shift = Select, Esc ends the session.
-enum TakeoverKeymap {
-    static let escapeKeyCode: UInt16 = 53
-    static let rightShiftKeyCode: UInt16 = 60
-
-    private static let buttons: [UInt16: NESButtons] = [
-        7: .a,      // X
-        6: .b,      // Z
-        36: .start, // Return
-        76: .start, // keypad Enter
-        123: .left,
-        124: .right,
-        125: .down,
-        126: .up,
-    ]
-
-    static func button(for keyCode: UInt16) -> NESButtons? { buttons[keyCode] }
-}
-
 /// One live-play session on a wallpaper tile: raises one display's wallpaper
 /// window above the desktop icons, makes it key to capture the keyboard, and
 /// streams held-button state to the tile's helper on change. stop() restores
@@ -60,6 +40,9 @@ final class TakeoverSession {
     let window: WallpaperWindow
 
     private let tile: TileProcess
+    /// Fixed for the session's lifetime; a remap in Settings applies to
+    /// the next takeover, not this one.
+    private let keymap: TakeoverKeymap
     private let savedLevel: NSWindow.Level
     private let savedIgnoresMouse: Bool
     private var observers: [NSObjectProtocol] = []
@@ -69,10 +52,12 @@ final class TakeoverSession {
     private let requestEnd: () -> Void
 
     init(tileIndex: Int, tile: TileProcess, window: WallpaperWindow,
+         keymap: TakeoverKeymap = .standard,
          requestEnd: @escaping () -> Void) {
         self.tileIndex = tileIndex
         self.tile = tile
         self.window = window
+        self.keymap = keymap
         self.savedLevel = window.level
         self.savedIgnoresMouse = window.ignoresMouseEvents
         self.requestEnd = requestEnd
@@ -120,7 +105,7 @@ final class TakeoverSession {
             requestEnd()
             return true
         case .keyDown, .keyUp:
-            if let button = TakeoverKeymap.button(for: event.keyCode) {
+            if let button = keymap.button(for: event.keyCode) {
                 // Held buttons are level-based from keyDown/keyUp pairs;
                 // auto-repeats are consumed without resending.
                 if event.type == .keyUp {
@@ -134,11 +119,15 @@ final class TakeoverSession {
             // The game owns the keyboard while playing: consume unmapped
             // keys too instead of letting them fall through and beep.
             return true
-        case .flagsChanged where event.keyCode == TakeoverKeymap.rightShiftKeyCode:
-            if event.modifierFlags.contains(.shift) {
-                heldButtons.insert(.select)
+        case .flagsChanged:
+            guard let (button, flagBit) = keymap.modifierBinding(for: event.keyCode)
+            else { return false }
+            // Device-specific flag bits distinguish left/right variants;
+            // pressed state is level-based like keyDown/keyUp.
+            if event.modifierFlags.rawValue & flagBit != 0 {
+                heldButtons.insert(button)
             } else {
-                heldButtons.remove(.select)
+                heldButtons.remove(button)
             }
             tile.sendInput(heldButtons)
             return true

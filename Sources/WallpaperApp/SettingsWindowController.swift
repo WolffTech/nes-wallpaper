@@ -125,7 +125,7 @@ final class SaverInstallModel: ObservableObject {
 /// Panes of the settings window. Splitting the form across tabs keeps every
 /// pane short enough to fit without scrolling at the window's fixed size.
 enum SettingsTab: Hashable {
-    case library, display, general
+    case library, display, controls, general
 }
 
 /// Selected tab. An ObservableObject rather than `@State` so the app still
@@ -139,6 +139,7 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject var loginItem: LoginItemModel
     @ObservedObject var saverInstall: SaverInstallModel
+    @ObservedObject var controls: ControlsModel
     @ObservedObject var tabModel: SettingsTabModel
 
     // Header strip, pane, footer strip. A TabView would nest its own bordered
@@ -149,11 +150,12 @@ struct SettingsView: View {
             Picker("Section", selection: $tabModel.tab) {
                 Text("Library").tag(SettingsTab.library)
                 Text("Display").tag(SettingsTab.display)
+                Text("Controls").tag(SettingsTab.controls)
                 Text("General").tag(SettingsTab.general)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 300)
+            .frame(width: 380)
             .padding(12)
 
             Divider()
@@ -171,13 +173,14 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(width: 520, height: 440)
+        .frame(width: 520, height: 480)
     }
 
     @ViewBuilder private var selectedPane: some View {
         switch tabModel.tab {
         case .library: libraryTab
         case .display: displayTab
+        case .controls: ControlsPane(model: controls)
         case .general: generalTab
         }
     }
@@ -321,6 +324,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let model = SettingsModel()
     private let loginItem = LoginItemModel()
     private let saverInstall = SaverInstallModel()
+    private let controls = ControlsModel()
     private let tabModel = SettingsTabModel()
 
     init(menuBar: MenuBarController) {
@@ -333,13 +337,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         super.init(window: window)
         model.onApply = { [weak menuBar] in menuBar?.settingsApplied() }
+        controls.onChanged = { [weak menuBar] in menuBar?.controlsChanged() }
         window.contentViewController = NSHostingController(
             rootView: SettingsView(model: model, loginItem: loginItem,
-                                   saverInstall: saverInstall, tabModel: tabModel))
+                                   saverInstall: saverInstall, controls: controls,
+                                   tabModel: tabModel))
         window.delegate = self
         model.load()
         loginItem.load()
         saverInstall.load()
+        controls.load()
         window.center()
     }
 
@@ -350,6 +357,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         model.load()
         loginItem.load() // may have changed in System Settings meanwhile
         saverInstall.load() // user may have deleted the installed saver
+        controls.load()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
