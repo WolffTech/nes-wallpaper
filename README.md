@@ -53,6 +53,27 @@ The app lives in the menu bar (no Dock icon). Its menu includes Pause and Low Po
 
 Browse TASVideos… lists every current NES publication in FM2 format straight from the [tasvideos.org API](https://tasvideos.org/api) and downloads runs into your movies folder. Each row shows whether a matching ROM (by the checksum in the movie's header) is already in your ROM folder; new movies are picked up the next time the wallpaper starts.
 
+## Releases
+
+Pushing a version tag publishes a signed, notarized build automatically:
+
+```sh
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+The Release workflow runs the tests and smoke test, builds the app with a Developer ID identity, notarizes and staples it, and attaches `NES-Wallpaper-<version>.zip` to a GitHub release. `CFBundleShortVersionString` comes from the tag and `CFBundleVersion` is the commit count on it.
+
+One-time setup — repository secrets (Settings → Secrets and variables → Actions):
+
+- `MACOS_CERT_P12` — base64 of a Developer ID Application certificate export
+  (`base64 -i cert.p12 | pbcopy`)
+- `MACOS_CERT_PASSWORD` — the export's password
+- `NOTARY_KEY_P8` — contents of an App Store Connect API key (.p8)
+- `NOTARY_KEY_ID` / `NOTARY_ISSUER_ID` — the key's ID and issuer ID
+
+Local releases work without any of that: `./Scripts/notarize.sh` uses the keychain certificate and a `notarytool` keychain profile (see the script header for the one-time `store-credentials` setup). The Test Build workflow (manual dispatch) remains the quick path to an unsigned, ad-hoc build of any branch.
+
 ## Screensaver
 
 The Screen Saver row's Install… button (Settings → General) copies the bundled `NES Wallpaper.saver` into `~/Library/Screen Savers`; pick "NES Wallpaper" in System Settings under Wallpaper → Screen Saver (macOS asks once to approve a legacy screensaver). The saver runs inside Apple's sandboxed `legacyScreenSaver` host, so it spawns no emulators of its own: it mmaps the app's frame files read-only (the sandbox grants filesystem-wide read access), follows tile rotation through `manifest.json`, and sends a loopback UDP heartbeat (to a port the manifest advertises) that keeps the app emulating while the screen is locked — the app otherwise pauses when nothing is visible. UDP rather than a file because the saver can only write inside its container, which macOS shields from other processes. It works on the lock screen of a logged-in user; nothing third-party runs at the login window, and the wallpaper app must be running (launch at login recommended) or the saver shows a notice instead.

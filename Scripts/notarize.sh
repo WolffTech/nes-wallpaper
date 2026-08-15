@@ -12,6 +12,10 @@
 #   CODESIGN_IDENTITY  signing identity; defaults to the first Developer ID
 #                      Application certificate found in the keychain.
 #   NOTARY_PROFILE     notarytool keychain profile name (default: nes-wallpaper)
+#   NOTARY_KEY_FILE, NOTARY_KEY_ID, NOTARY_ISSUER_ID
+#                      App Store Connect API key credentials; when all three
+#                      are set they are used instead of the keychain profile
+#                      (for CI, where no stored profile exists).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +23,14 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 APP_DIR="$REPO_ROOT/dist/NES Wallpaper.app"
 NOTARY_PROFILE="${NOTARY_PROFILE:-nes-wallpaper}"
+
+if [[ -n "${NOTARY_KEY_FILE:-}" && -n "${NOTARY_KEY_ID:-}" && -n "${NOTARY_ISSUER_ID:-}" ]]; then
+    NOTARY_AUTH=(--key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+    NOTARY_AUTH_DESC="API key $NOTARY_KEY_ID"
+else
+    NOTARY_AUTH=(--keychain-profile "$NOTARY_PROFILE")
+    NOTARY_AUTH_DESC="profile: $NOTARY_PROFILE"
+fi
 
 if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then
     CODESIGN_IDENTITY="$(security find-identity -v -p codesigning \
@@ -38,19 +50,19 @@ codesign --verify --strict --deep "$APP_DIR"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/Contents/Info.plist")"
 ZIP="$REPO_ROOT/dist/NES-Wallpaper-$VERSION.zip"
 
-echo "==> Submitting for notarization (profile: $NOTARY_PROFILE)"
+echo "==> Submitting for notarization ($NOTARY_AUTH_DESC)"
 SUBMIT_ZIP="$(mktemp -d)/NES-Wallpaper-notarize.zip"
 trap 'rm -rf "$(dirname "$SUBMIT_ZIP")"' EXIT
 ditto -c -k --keepParent "$APP_DIR" "$SUBMIT_ZIP"
 
 SUBMIT_OUTPUT="$(xcrun notarytool submit "$SUBMIT_ZIP" \
-    --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)" || true
+    "${NOTARY_AUTH[@]}" --wait 2>&1)" || true
 echo "$SUBMIT_OUTPUT"
 if ! grep -q 'status: Accepted' <<<"$SUBMIT_OUTPUT"; then
     echo "error: notarization not accepted; fetching the log:" >&2
     SUBMISSION_ID="$(sed -n 's/^ *id: //p' <<<"$SUBMIT_OUTPUT" | head -1)"
     if [[ -n "$SUBMISSION_ID" ]]; then
-        xcrun notarytool log "$SUBMISSION_ID" --keychain-profile "$NOTARY_PROFILE" >&2
+        xcrun notarytool log "$SUBMISSION_ID" "${NOTARY_AUTH[@]}" >&2
     fi
     exit 1
 fi
