@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import CFCEUX
 
 // Usage: nes-headless <rom> [--movie file.fm2] [--frames N] [--dump-every N]
-//        [--out dir] [--filter name]
+//        [--out dir] [--filter name] [--raw]
 
 // Same name -> (specfilt, specfilteropt) map as nes-helper; see
 // VideoFilter.swift in NESWallpaperCore.
@@ -27,6 +27,7 @@ var frames = 600
 var dumpEvery = 0
 var outDir = "frames"
 var filterName = "none"
+var dumpRaw = false
 
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
@@ -37,12 +38,13 @@ while !args.isEmpty {
     case "--dump-every": dumpEvery = Int(args.removeFirst()) ?? 0
     case "--out": outDir = args.removeFirst()
     case "--filter": filterName = args.isEmpty ? filterName : args.removeFirst()
+    case "--raw": dumpRaw = true
     default: romPath = arg
     }
 }
 
 guard let romPath, let filter = filterMap[filterName] else {
-    FileHandle.standardError.write("usage: nes-headless <rom> [--movie file.fm2] [--frames N] [--dump-every N] [--out dir] [--filter \(filterMap.keys.sorted().joined(separator: "|"))]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: nes-headless <rom> [--movie file.fm2] [--frames N] [--dump-every N] [--out dir] [--filter \(filterMap.keys.sorted().joined(separator: "|"))] [--raw]\n".data(using: .utf8)!)
     exit(2)
 }
 
@@ -93,6 +95,11 @@ for frame in 0..<frames {
     if wantDump, let bgrx {
         let url = URL(fileURLWithPath: outDir).appendingPathComponent(String(format: "frame_%06d.png", frame))
         writePNG(bgrx, width: width, height: height, to: url)
+        if dumpRaw {
+            // Raw BGRX bytes: byte-stable across OS releases, unlike PNG encoding.
+            let raw = Data(bytes: bgrx, count: width * height * 4)
+            try! raw.write(to: url.deletingPathExtension().appendingPathExtension("raw"))
+        }
     }
     if moviePath != nil && fceux_movie_is_playing() == 0 {
         print("movie finished at frame \(fceux_movie_frame())")
