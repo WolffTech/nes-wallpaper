@@ -145,13 +145,21 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         refreshTakeoverItem()
     }
 
-    /// "Take Over Game ▸" submenu of the games on the grid, or a plain
-    /// "Stop Playing <game>" item while a session is running.
+    /// "Take Over Game ▸" submenu (click-to-select plus the games on the
+    /// grid), or a plain "Stop Playing <game>" / "Cancel Game Selection"
+    /// item while one of those is running.
     private func refreshTakeoverItem() {
         if let title = controller?.takeoverGameTitle {
             takeoverItem.title = "Stop Playing \(title)"
             takeoverItem.submenu = nil
             takeoverItem.action = #selector(stopTakeover)
+            takeoverItem.isEnabled = true
+            return
+        }
+        if controller?.tileSelectionActive == true {
+            takeoverItem.title = "Cancel Game Selection"
+            takeoverItem.submenu = nil
+            takeoverItem.action = #selector(cancelTileSelection)
             takeoverItem.isEnabled = true
             return
         }
@@ -164,6 +172,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         let submenu = NSMenu()
         submenu.autoenablesItems = false
+        let clickItem = NSMenuItem(title: "Click a Game on Screen…",
+                                   action: #selector(selectGameByClicking), keyEquivalent: "")
+        clickItem.target = self
+        submenu.addItem(clickItem)
+        submenu.addItem(.separator())
         for game in controller.currentGames() {
             let item = NSMenuItem(title: game.title,
                                   action: #selector(takeOverGame(_:)), keyEquivalent: "")
@@ -172,11 +185,21 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             submenu.addItem(item)
         }
         takeoverItem.submenu = submenu
-        takeoverItem.isEnabled = !submenu.items.isEmpty
+        takeoverItem.isEnabled = true
     }
 
     @objc private func takeOverGame(_ sender: NSMenuItem) {
         controller?.beginTakeover(tileIndex: sender.tag)
+        refreshMenuTitles()
+    }
+
+    @objc private func selectGameByClicking() {
+        controller?.beginTileSelection()
+        refreshMenuTitles()
+    }
+
+    @objc private func cancelTileSelection() {
+        controller?.cancelTileSelection()
         refreshMenuTitles()
     }
 

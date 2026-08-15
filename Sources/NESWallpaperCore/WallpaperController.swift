@@ -134,6 +134,10 @@ public final class WallpaperController {
     /// excluded from rotation and pause while the user is playing it.
     private var takeoverSession: TakeoverSession?
 
+    /// The active "click a game to play" mode, mutually exclusive with a
+    /// running session (picking a tile ends one and starts the other).
+    private var tileSelection: TileSelectionMode?
+
     /// Fired on the main queue whenever a session ends, however it ends,
     /// so the menu can drop its "Stop Playing" state.
     public var onTakeoverEnded: (() -> Void)?
@@ -245,6 +249,7 @@ public final class WallpaperController {
             forName: Notification.Name("com.apple.screenIsLocked"),
             object: nil, queue: .main) { [weak self] _ in
             self?.endTakeover() // don't leave a raised, keyboard-grabbing window
+            self?.cancelTileSelection()
             self?.screenLocked = true
             self?.updatePauseState()
         })
@@ -375,11 +380,49 @@ public final class WallpaperController {
         URL(fileURLWithPath: spec.rom).deletingPathExtension().lastPathComponent
     }
 
+    /// Raise the wallpaper on every display and let the user click the game
+    /// to take over, with the hovered tile spotlit. Esc, focus loss, or
+    /// cancelTileSelection back out.
+    public func beginTileSelection() {
+        guard tileSelection == nil, takeoverSession == nil,
+              !emulationPaused, !slots.isEmpty else { return }
+        let mode = TileSelectionMode(
+            windows: slots.map(\.window), columns: columns, rows: rows,
+            onHover: { [weak self] tile in self?.setEmphasis(.spotlight(tile)) },
+            onPick: { [weak self] tile in
+                guard let self else { return }
+                self.cancelTileSelection()
+                self.beginTakeover(tileIndex: tile)
+            },
+            onCancel: { [weak self] in self?.cancelTileSelection() })
+        tileSelection = mode
+        mode.start()
+        Self.log("tile selection started")
+    }
+
+    public var tileSelectionActive: Bool { tileSelection != nil }
+
+    /// Leave selection mode (idempotent), restoring windows and brightness.
+    public func cancelTileSelection() {
+        guard let mode = tileSelection else { return }
+        tileSelection = nil
+        mode.stop()
+        setEmphasis(.none)
+        // Hand focus back unless a takeover session is about to take key.
+        NSApp.deactivate()
+        Self.log("tile selection ended")
+    }
+
+    private func setEmphasis(_ emphasis: TileGridRenderer.Emphasis) {
+        for slot in slots { slot.renderer.emphasis = emphasis }
+    }
+
     /// Start live play on one tile: the wallpaper window on the display
     /// under the mouse is raised and captures the keyboard, and the tile's
     /// helper switches from movie playback to the live pad. One session at
     /// a time; no-op while emulation is paused.
     public func beginTakeover(tileIndex: Int) {
+        cancelTileSelection()
         guard takeoverSession == nil, tiles.indices.contains(tileIndex),
               !emulationPaused else { return }
         let mouse = NSEvent.mouseLocation
@@ -391,6 +434,7 @@ public final class WallpaperController {
         ) { [weak self] in self?.endTakeover() }
         takeoverSession = session
         session.start()
+        setEmphasis(.spotlight(tileIndex))
         // Present at full rate for input latency even in Low Power Mode;
         // the helper already publishes every frame while taken over.
         slot.displayLink.preferredFrameRateRange = CAFrameRateRange(
@@ -406,6 +450,7 @@ public final class WallpaperController {
         guard let session = takeoverSession else { return }
         takeoverSession = nil
         session.stop()
+        setEmphasis(.none)
         for slot in slots { configureFrameRate(for: slot.displayLink) }
         Self.log("takeover ended on tile \(session.tileIndex)")
         onTakeoverEnded?()
@@ -430,6 +475,7 @@ public final class WallpaperController {
     }
 
     public func shutdown() {
+        cancelTileSelection()
         // Tear the session down without the usual end-of-session rotation:
         // every helper is about to be terminated anyway.
         if let session = takeoverSession {
@@ -573,6 +619,9 @@ public final class WallpaperController {
     /// Reconcile windows with the attached displays: resize survivors, drop
     /// windows whose display is gone, add windows for new displays.
     private func screensChanged() {
+        // Selection mode holds per-window saved state; displays changing
+        // under it would restore the wrong windows. Start over instead.
+        cancelTileSelection()
         var departed = slots
         slots.removeAll()
         for screen in NSScreen.screens {
