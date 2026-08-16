@@ -79,6 +79,11 @@ public struct TASPublication: Codable, Identifiable, Equatable, Sendable {
             : String(format: "%02d:%02d", minutes, seconds)
     }
 
+    /// The publication's page on TASVideos, e.g. `https://tasvideos.org/122M`.
+    public var publicationURL: URL {
+        URL(string: "https://tasvideos.org/\(id)M")!
+    }
+
     public var youtubeURL: URL? {
         urls.lazy
             .filter { $0.contains("youtube.com") || $0.contains("youtu.be") }

@@ -119,3 +119,15 @@ Unicode, Inc. hereby grants the right to freely use the information supplied
 in this file in the creation of products supporting the Unicode Standard, and
 to make copies of this file in any form for internal or external distribution
 as long as this notice remains attached.
+
+## TASVideos movies and metadata
+
+NES Wallpaper does not bundle any TASVideos content. At the user's request it
+downloads tool-assisted movie files and catalog metadata (titles, authors,
+durations, links) from <https://tasvideos.org>. That content is copyright its
+respective authors and is licensed under the Creative Commons Attribution 2.0
+license (CC BY 2.0). The app displays each movie's authors and links to its
+TASVideos publication page in the browser used to download it.
+
+- Site license: <https://tasvideos.org/SiteLicense>
+- License text: <https://creativecommons.org/licenses/by/2.0/>

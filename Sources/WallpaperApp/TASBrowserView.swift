@@ -92,6 +92,13 @@ struct TASBrowserView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Button {
+                NSWorkspace.shared.open(publication.publicationURL)
+            } label: {
+                Image(systemName: "arrow.up.right.square")
+            }
+            .buttonStyle(.borderless)
+            .help("View this publication on TASVideos")
             if let youtubeURL = publication.youtubeURL {
                 Button {
                     NSWorkspace.shared.open(youtubeURL)
@@ -142,8 +149,12 @@ struct TASBrowserView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
-            Link("tasvideos.org", destination: URL(string: "https://tasvideos.org")!)
+            (Text("Tool-assisted movies © their authors, from ")
+             + Text("[TASVideos](https://tasvideos.org)")
+             + Text(" under ")
+             + Text("[CC BY 2.0](https://creativecommons.org/licenses/by/2.0/)"))
                 .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
