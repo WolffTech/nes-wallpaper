@@ -30,9 +30,10 @@ jobs:
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           missing=0
-          for name in MACOS_CERT_P12 MACOS_CERT_PASSWORD NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+          for name in MACOS_CERT_P12 MACOS_CERT_PASSWORD NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID SPARKLE_ED_PRIVATE_KEY; do
             if [[ -z "${!name}" ]]; then
               echo "::error::missing repository secret: $name"
               missing=1
@@ -100,12 +101,40 @@ jobs:
       - name: Verify app bundle
         run: ./Scripts/verify-app.sh
 
+      # The EdDSA signature covers the exact DMG bytes, so this must run on
+      # the final signed, notarized, and stapled image, and the very same
+      # file must be the one uploaded below.
+      - name: Generate Sparkle appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          SPARKLE_VERSION: 2.9.5
+          SPARKLE_SHA256: 015336b601493e05c237964954bff6191370003d94edefe663724c88840d73cc
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/Sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          echo "$SPARKLE_SHA256  $RUNNER_TEMP/Sparkle.tar.xz" | shasum -a 256 --check
+          mkdir "$RUNNER_TEMP/sparkle-dist" "$RUNNER_TEMP/appcast-archives"
+          tar -xJf "$RUNNER_TEMP/Sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle-dist"
+          # generate_appcast writes state next to its archives; give it a
+          # copy so nothing touches the DMG that gets uploaded.
+          cp "dist/NES-Wallpaper-$APP_VERSION.dmg" "$RUNNER_TEMP/appcast-archives/"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | \
+            "$RUNNER_TEMP/sparkle-dist/bin/generate_appcast" \
+              --ed-key-file - \
+              --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+              --link "https://github.com/${GITHUB_REPOSITORY}" \
+              -o dist/appcast.xml \
+              "$RUNNER_TEMP/appcast-archives"
+          cat dist/appcast.xml
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           DMG="dist/NES-Wallpaper-$APP_VERSION.dmg"
+          APPCAST="dist/appcast.xml"
           SOURCE_ZIP="dist/NES-Wallpaper-$APP_VERSION-source.zip"
           git archive --format=zip \
             --prefix="NES-Wallpaper-$APP_VERSION/" \
@@ -114,13 +143,13 @@ jobs:
           # A tag created through the GitHub release UI already has a release;
           # attach the artifacts to it. A plain pushed tag gets a new release.
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$DMG" "$SOURCE_ZIP" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$DMG" "$APPCAST" "$SOURCE_ZIP" --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
               --title "NES Wallpaper $APP_VERSION" \
               --generate-notes \
               --verify-tag \
-              "$DMG" "$SOURCE_ZIP"
+              "$DMG" "$APPCAST" "$SOURCE_ZIP"
           fi
 
       - name: Remove signing keychain

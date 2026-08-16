@@ -97,6 +97,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var settingsWindow: SettingsWindowController?
     private var browserWindow: TASBrowserWindowController?
     private var takeoverHotKey: GlobalHotKey?
+    private(set) var updaterController: UpdaterController?
 
     /// User's pause intent; sticks across stop/start and screen lock (the
     /// controller combines it with its own automatic pause conditions).
@@ -152,6 +153,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                                       action: #selector(openSettings), keyEquivalent: "")
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        // KVO on canCheckForUpdates owns this item's enabled state, so it
+        // needs no refreshMenuTitles() handling.
+        if UpdaterController.available {
+            let updater = UpdaterController()
+            let checkItem = NSMenuItem(title: "Check for Updates\u{2026}",
+                                       action: nil, keyEquivalent: "")
+            updater.bind(menuItem: checkItem)
+            menu.addItem(checkItem)
+            updaterController = updater
+        }
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit",

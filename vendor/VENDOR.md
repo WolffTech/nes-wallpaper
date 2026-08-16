@@ -3,6 +3,10 @@
 
 # Vendored code
 
+Swift Package Manager dependencies (currently only the Sparkle update
+framework) are not vendored here; they are pinned to exact versions in
+`Package.resolved`.
+
 ## FCEUX core
 
 - Upstream: https://github.com/TASEmulators/fceux

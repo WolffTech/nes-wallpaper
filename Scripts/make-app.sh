@@ -98,6 +98,33 @@ if [[ -n "$BUILD_NUMBER" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$SAVER_PLIST"
 fi
 
+# Sparkle.framework from the SwiftPM binary artifact (exact-pinned in
+# Package.swift / Package.resolved). The artifacts dir sits at the top of
+# the scratch dir on every build system; the layout beneath it is a SwiftPM
+# implementation detail, hence find. Fail loudly if either moves.
+echo "==> Embedding Sparkle.framework"
+ARTIFACTS_DIR="$REPO_ROOT/.build/artifacts"
+SPARKLE_SRC="$(find "$ARTIFACTS_DIR" -type d -name Sparkle.framework -path "*macos*" -print -quit)"
+if [[ -z "$SPARKLE_SRC" ]]; then
+    echo "error: Sparkle.framework not found under $ARTIFACTS_DIR" >&2
+    exit 1
+fi
+FRAMEWORKS_DIR="$APP_DIR/Contents/Frameworks"
+mkdir -p "$FRAMEWORKS_DIR"
+# cp -R preserves the framework's Versions/B symlink layout.
+cp -R "$SPARKLE_SRC" "$FRAMEWORKS_DIR/Sparkle.framework"
+
+# The binary was linked with an rpath into .build/artifacts, which is how
+# `swift run` finds Sparkle during development. Swap it for the
+# bundle-relative one so the shipped app never resolves the framework
+# outside its own bundle.
+MAIN_EXEC="$APP_DIR/Contents/MacOS/NESWallpaper"
+while read -r rpath; do
+    [[ "$rpath" == *.build* || "$rpath" == *artifacts* ]] || continue
+    install_name_tool -delete_rpath "$rpath" "$MAIN_EXEC"
+done < <(otool -l "$MAIN_EXEC" | awk '/LC_RPATH/{getline; getline; print $2}')
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$MAIN_EXEC"
+
 if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
     echo "==> Codesigning (ad hoc)"
     SIGN_FLAGS=(--timestamp=none)
@@ -105,7 +132,18 @@ else
     echo "==> Codesigning ($CODESIGN_IDENTITY)"
     SIGN_FLAGS=(--options runtime --timestamp)
 fi
-# Sign nested code first (helper binary, saver bundle), then the app.
+# Sign nested code first, then the app. Sparkle's own nested code goes
+# innermost-first; the XPC services keep their upstream entitlements
+# (Downloader.xpc is sandboxed with the network-client entitlement), which
+# is Sparkle's documented re-signing recipe.
+SPARKLE_FMWK="$FRAMEWORKS_DIR/Sparkle.framework"
+for xpc in "$SPARKLE_FMWK/Versions/B/XPCServices/"*.xpc; do
+    codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" \
+        --preserve-metadata=entitlements "$xpc"
+done
+codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" "$SPARKLE_FMWK/Versions/B/Autoupdate"
+codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" "$SPARKLE_FMWK/Versions/B/Updater.app"
+codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" "$SPARKLE_FMWK"
 codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" "$APP_DIR/Contents/MacOS/nes-helper"
 codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" "$SAVER_DIR"
 codesign --force --sign "$CODESIGN_IDENTITY" "${SIGN_FLAGS[@]}" "$APP_DIR"
