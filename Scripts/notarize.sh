@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Nick Wolff <nick@wolff.tech>
 # SPDX-License-Identifier: GPL-2.0-only
 
-# Builds a Developer ID-signed bundle, notarizes it with Apple, staples the
-# ticket, and produces a distributable zip in dist/. Safe to run from any cwd.
+# Builds a Developer ID-signed bundle, packages it in a signed disk image,
+# notarizes it with Apple, and staples the ticket. Safe to run from any cwd.
 #
 # One-time setup:
 #   1. A "Developer ID Application" certificate in the keychain
@@ -51,14 +51,16 @@ echo "==> Verifying signature"
 codesign --verify --strict --deep "$APP_DIR"
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/Contents/Info.plist")"
-ZIP="$REPO_ROOT/dist/NES-Wallpaper-$VERSION.zip"
+DMG="$REPO_ROOT/dist/NES-Wallpaper-$VERSION.dmg"
+
+"$SCRIPT_DIR/make-dmg.sh" "$APP_DIR" "$DMG"
+
+echo "==> Signing disk image ($CODESIGN_IDENTITY)"
+codesign --force --sign "$CODESIGN_IDENTITY" --timestamp "$DMG"
+codesign --verify --strict --verbose=2 "$DMG"
 
 echo "==> Submitting for notarization ($NOTARY_AUTH_DESC)"
-SUBMIT_ZIP="$(mktemp -d)/NES-Wallpaper-notarize.zip"
-trap 'rm -rf "$(dirname "$SUBMIT_ZIP")"' EXIT
-ditto -c -k --keepParent "$APP_DIR" "$SUBMIT_ZIP"
-
-SUBMIT_OUTPUT="$(xcrun notarytool submit "$SUBMIT_ZIP" \
+SUBMIT_OUTPUT="$(xcrun notarytool submit "$DMG" \
     "${NOTARY_AUTH[@]}" --wait 2>&1)" || true
 echo "$SUBMIT_OUTPUT"
 if ! grep -q 'status: Accepted' <<<"$SUBMIT_OUTPUT"; then
@@ -70,15 +72,11 @@ if ! grep -q 'status: Accepted' <<<"$SUBMIT_OUTPUT"; then
     exit 1
 fi
 
-echo "==> Stapling ticket"
-xcrun stapler staple "$APP_DIR"
-xcrun stapler validate "$APP_DIR"
-
-echo "==> Creating distribution zip"
-rm -f "$ZIP"
-ditto -c -k --keepParent "$APP_DIR" "$ZIP"
+echo "==> Stapling ticket to disk image"
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
 
 echo "==> Done"
 echo "    App: $APP_DIR"
-echo "    Zip: $ZIP"
-spctl -a -vv "$APP_DIR"
+echo "    DMG: $DMG"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"

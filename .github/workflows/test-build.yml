@@ -41,16 +41,16 @@ jobs:
       - name: Verify app bundle
         run: ./Scripts/verify-app.sh
 
-      - name: Create download archive
+      - name: Create download disk image
         run: |
-          ditto -c -k --keepParent \
+          ./Scripts/make-dmg.sh \
             "dist/NES Wallpaper.app" \
-            "dist/NES-Wallpaper-test-build.zip"
+            "dist/NES-Wallpaper-test-build.dmg"
 
       - name: Upload test build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: NES-Wallpaper-arm64-${{ github.run_number }}
-          path: dist/NES-Wallpaper-test-build.zip
+          path: dist/NES-Wallpaper-test-build.dmg
           if-no-files-found: error
           retention-days: 14
