@@ -149,7 +149,8 @@ for sig in [SIGTERM, SIGINT] {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory) // no Dock icon, no menu bar takeover
+let showDockIcon = menuBarMode && WallpaperSettings.load().showDockIcon
+app.setActivationPolicy(showDockIcon ? .regular : .accessory)
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()

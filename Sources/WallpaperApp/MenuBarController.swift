@@ -16,6 +16,7 @@ struct WallpaperSettings {
     static let videoFilterKey = "VideoFilter"
     static let lowPowerModeKey = "LowPowerMode"
     static let takeoverControlsKey = "TakeoverControls"
+    static let showDockIconKey = "ShowDockIcon"
 
     var romsDir: String?
     var moviesDir: String?
@@ -25,6 +26,7 @@ struct WallpaperSettings {
     var includeROMsWithoutMovies: Bool
     var videoFilter: VideoFilter
     var lowPowerMode: Bool
+    var showDockIcon: Bool
     /// Takeover key overrides, button name → keyCode; empty = all defaults
     /// (see TakeoverKeymap.init(buttonAssignments:)).
     var takeoverControls: [String: Int]
@@ -33,8 +35,7 @@ struct WallpaperSettings {
         rotationMinutes > 0 ? TimeInterval(rotationMinutes) * 60 : nil
     }
 
-    static func load() -> WallpaperSettings {
-        let defaults = UserDefaults.standard
+    static func load(defaults: UserDefaults = .standard) -> WallpaperSettings {
         return WallpaperSettings(
             romsDir: defaults.string(forKey: romsDirKey),
             moviesDir: defaults.string(forKey: moviesDirKey),
@@ -46,12 +47,12 @@ struct WallpaperSettings {
             videoFilter: VideoFilter(
                 rawValue: defaults.string(forKey: videoFilterKey) ?? "") ?? .none,
             lowPowerMode: defaults.bool(forKey: lowPowerModeKey),
+            showDockIcon: defaults.bool(forKey: showDockIconKey),
             takeoverControls: defaults.dictionary(forKey: takeoverControlsKey)?
                 .compactMapValues { $0 as? Int } ?? [:])
     }
 
-    func save() {
-        let defaults = UserDefaults.standard
+    func save(defaults: UserDefaults = .standard) {
         defaults.set(romsDir, forKey: Self.romsDirKey)
         defaults.set(moviesDir, forKey: Self.moviesDirKey)
         defaults.set(columns, forKey: Self.columnsKey)
@@ -60,6 +61,7 @@ struct WallpaperSettings {
         defaults.set(includeROMsWithoutMovies, forKey: Self.includeROMsWithoutMoviesKey)
         defaults.set(videoFilter.rawValue, forKey: Self.videoFilterKey)
         defaults.set(lowPowerMode, forKey: Self.lowPowerModeKey)
+        defaults.set(showDockIcon, forKey: Self.showDockIconKey)
         defaults.set(takeoverControls, forKey: Self.takeoverControlsKey)
     }
 }
@@ -251,6 +253,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// Called by the settings window's Apply button after it has saved the
     /// new values: restart the wallpaper only if it is currently running.
     func settingsApplied() {
+        let settings = WallpaperSettings.load()
+        NSApp.setActivationPolicy(settings.showDockIcon ? .regular : .accessory)
         guard controller != nil else { return }
         startWallpaper(interactive: true)
     }
