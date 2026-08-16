@@ -125,6 +125,11 @@ final class TASPublicationTests: XCTestCase {
         XCTAssertNil(makePub(urls: ["https://archive.org/x.mp4"]).youtubeURL)
     }
 
+    func testPublicationURL() {
+        XCTAssertEqual(makePub(id: 122).publicationURL.absoluteString,
+                       "https://tasvideos.org/122M")
+    }
+
     func testAuthorsText() {
         XCTAssertEqual(makePub(authors: ["a", "b"]).authorsText, "a, b")
         XCTAssertEqual(makePub(authors: []).authorsText, "")

@@ -137,7 +137,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(takeoverItem)
 
         menu.addItem(.separator())
-        let browserItem = NSMenuItem(title: "Browse TASVideos",
+        let browserItem = NSMenuItem(title: "Browse Tool-Assisted Speedruns",
                                      action: #selector(openBrowser), keyEquivalent: "")
         browserItem.target = self
         menu.addItem(browserItem)

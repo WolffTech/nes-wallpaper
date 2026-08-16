@@ -165,7 +165,7 @@ final class TASBrowserWindowController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
-        window.title = "TASVideos Browser"
+        window.title = "TASVideos — Tool-Assisted Speedruns"
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.contentViewController = NSHostingController(
