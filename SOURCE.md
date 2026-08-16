@@ -4,7 +4,7 @@
 # Obtaining the corresponding source
 
 The complete corresponding source code for each official NES Wallpaper binary
-release is available from the same GitHub release page as the binary archive:
+release is available from the same GitHub release page as the binary disk image:
 
 <https://github.com/WolffTech/nes-wallpaper/releases>
 

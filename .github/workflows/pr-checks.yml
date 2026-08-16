@@ -106,3 +106,6 @@ jobs:
 
       - name: Verify app bundle
         run: ./Scripts/verify-app.sh
+
+      - name: Create download disk image
+        run: ./Scripts/make-dmg.sh
