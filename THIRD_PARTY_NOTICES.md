@@ -4,7 +4,24 @@
 # Third-party software notices
 
 NES Wallpaper incorporates the software listed below. The complete source for
-these components is included in the repository under `Sources/CFCEUX/`.
+the FCEUX-derived components is included in the repository under
+`Sources/CFCEUX/`; Sparkle is fetched by Swift Package Manager at the exact
+version pinned in `Package.resolved`.
+
+## Sparkle
+
+Sparkle is copyright (c) 2006 Andy Matuschak and the Sparkle Project
+contributors, and is distributed under the MIT License, with bundled
+components (bspatch, ed25519, SHA-1, and others) under compatible permissive
+licenses. See `ThirdPartyLicenses/Sparkle.txt` for the complete license text.
+
+Binary releases of NES Wallpaper embed `Sparkle.framework`, consumed as the
+prebuilt XCFramework published by the Sparkle project.
+
+- Upstream: <https://github.com/sparkle-project/Sparkle>
+- Version: pinned in `Package.resolved` (source available from upstream at
+  the matching tag)
+- License text: `ThirdPartyLicenses/Sparkle.txt`
 
 ## FCEUX
 

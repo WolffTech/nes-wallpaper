@@ -28,5 +28,9 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Nick Wolff</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/WolffTech/nes-wallpaper/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>/aDS6CqbqO9VB01QZ2YhqKbA+BlE/yfqTGpsMNABjWk=</string>
 </dict>
 </plist>

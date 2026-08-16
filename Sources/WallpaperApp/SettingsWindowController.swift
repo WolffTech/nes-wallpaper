@@ -3,6 +3,7 @@
 
 import AppKit
 import ServiceManagement
+import Sparkle
 import SwiftUI
 import NESWallpaperCore
 
@@ -125,6 +126,50 @@ final class SaverInstallModel: ObservableObject {
     }
 }
 
+/// Sparkle update preferences, applied immediately rather than via the Apply
+/// button: Sparkle's own user defaults, not WallpaperSettings, are the source
+/// of truth. Like the login item, this only functions from the installed
+/// .app bundle (see UpdaterController.available).
+final class UpdatesModel: ObservableObject {
+    @Published var automaticallyChecks = false
+    @Published var canCheckNow = false
+
+    let available = UpdaterController.available
+    let versionText: String = {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "dev"
+        let build = info?["CFBundleVersion"] as? String ?? "0"
+        return "Version \(version) (\(build))"
+    }()
+
+    private weak var updater: SPUUpdater?
+    private var canCheckObservation: NSKeyValueObservation?
+
+    func attach(_ updater: SPUUpdater) {
+        self.updater = updater
+        canCheckObservation = updater.observe(
+            \.canCheckForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
+            self?.canCheckNow = updater.canCheckForUpdates
+        }
+        load()
+    }
+
+    /// Reloaded on show(): Sparkle's own permission prompt can flip the
+    /// automatic-checks preference behind the window's back.
+    func load() {
+        automaticallyChecks = updater?.automaticallyChecksForUpdates ?? false
+    }
+
+    func setAutomaticallyChecks(_ enabled: Bool) {
+        updater?.automaticallyChecksForUpdates = enabled
+        load()
+    }
+
+    func checkNow() {
+        updater?.checkForUpdates()
+    }
+}
+
 /// Panes of the settings window. Splitting the form across tabs keeps every
 /// pane short enough to fit without scrolling at the window's fixed size.
 enum SettingsTab: Hashable {
@@ -143,6 +188,7 @@ struct SettingsView: View {
     @ObservedObject var loginItem: LoginItemModel
     @ObservedObject var saverInstall: SaverInstallModel
     @ObservedObject var controls: ControlsModel
+    @ObservedObject var updates: UpdatesModel
     @ObservedObject var tabModel: SettingsTabModel
 
     // Header strip, pane, footer strip. A TabView would nest its own bordered
@@ -283,6 +329,25 @@ struct SettingsView: View {
                     note(Text("Plays the wallpaper as your screen saver, including on the lock screen. After installing, pick \u{201C}NES Wallpaper\u{201D} in System Settings under Wallpaper \u{2192} Screen Saver. Frames only arrive while the app is running, so turn on Launch at Login."))
                 }
             }
+            Section {
+                LabeledContent {
+                    Button("Check Now") { updates.checkNow() }
+                        .disabled(!updates.available || !updates.canCheckNow)
+                } label: {
+                    Text("Software Updates")
+                    Text(updates.versionText)
+                }
+                Toggle("Check for Updates Automatically", isOn: Binding(
+                    get: { updates.automaticallyChecks },
+                    set: { updates.setAutomaticallyChecks($0) }))
+                    .disabled(!updates.available)
+            } footer: {
+                if !updates.available {
+                    note(Text("Available when running the installed app (see Scripts/make-app.sh)."))
+                } else {
+                    note(Text("Takes effect immediately; no need to press Apply. Updates are downloaded from GitHub Releases."))
+                }
+            }
         }
         .formStyle(.grouped)
     }
@@ -333,6 +398,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let loginItem = LoginItemModel()
     private let saverInstall = SaverInstallModel()
     private let controls = ControlsModel()
+    private let updates = UpdatesModel()
     private let tabModel = SettingsTabModel()
 
     init(menuBar: MenuBarController) {
@@ -353,10 +419,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         controls.onShortcutRecordingChanged = { [weak menuBar] recording in
             menuBar?.shortcutRecordingChanged(recording)
         }
+        if let updater = menuBar.updaterController?.updater {
+            updates.attach(updater)
+        }
         window.contentViewController = NSHostingController(
             rootView: SettingsView(model: model, loginItem: loginItem,
                                    saverInstall: saverInstall, controls: controls,
-                                   tabModel: tabModel))
+                                   updates: updates, tabModel: tabModel))
         window.delegate = self
         model.load()
         loginItem.load()
@@ -373,6 +442,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         loginItem.load() // may have changed in System Settings meanwhile
         saverInstall.load() // user may have deleted the installed saver
         controls.load()
+        updates.load() // Sparkle's permission prompt may have flipped it
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }

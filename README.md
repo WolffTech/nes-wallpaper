@@ -48,6 +48,15 @@ Controls**.
 To use the screensaver, open **Settings → General**, install it, then select
 **NES Wallpaper** in macOS **System Settings → Wallpaper → Screen Saver**.
 
+### Updates
+
+The app checks GitHub Releases for updates via
+[Sparkle](https://sparkle-project.org) — use **Check for Updates…** in the
+menu bar, or turn on automatic checks in **Settings → General**. In-app
+updating only works after the app has been moved to **Applications** (macOS
+runs apps launched from the disk image or `~/Downloads` translocated, which
+Sparkle cannot update in place).
+
 ## Build from source
 
 Install Xcode Command Line Tools, clone the repository, then run:
@@ -65,8 +74,24 @@ swift test
 ./Scripts/smoke-test.sh
 ```
 
+On toolchains that use the new SwiftPM build system (Swift 6.4+, products
+under `.build/out`), `swift test` needs Sparkle.framework copied beside the
+test products once per clean build:
+
+```sh
+mkdir -p .build/out/Products/Debug/PackageFrameworks
+cp -R .build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework \
+    .build/out/Products/Debug/PackageFrameworks/
+```
+
 See [`vendor/VENDOR.md`](vendor/VENDOR.md) for details about the vendored FCEUX
 core.
+
+If you fork this repository and distribute your own builds, replace
+`SUFeedURL` and `SUPublicEDKey` in `Scripts/Info.plist` with your own update
+feed and [Sparkle](https://sparkle-project.org) signing key — the committed
+values belong to the official releases, so fork builds would otherwise try to
+update from this repository's feed.
 
 ## License
 

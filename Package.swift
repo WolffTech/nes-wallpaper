@@ -12,6 +12,13 @@ let package = Package(
         // this dylib in the bundle structure legacyScreenSaver expects.
         .library(name: "NESWallpaperSaver", type: .dynamic, targets: ["SaverPlugin"]),
     ],
+    dependencies: [
+        // Auto-update framework, consumed as the upstream prebuilt
+        // XCFramework so plain `swift build` works without Xcode. Exact pin;
+        // Sparkle's own manifest pins the artifact checksum, and
+        // Scripts/make-app.sh embeds the framework into the app bundle.
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5"),
+    ],
     targets: [
         // FCEUX core (vendored, see vendor/VENDOR.md) plus a C shim.
         .target(
@@ -71,7 +78,10 @@ let package = Package(
         // Wallpaper app: spawns one helper per tile, renders the grid.
         .executableTarget(
             name: "nes-wallpaper",
-            dependencies: ["NESWallpaperCore", "CShm", "CFCEUX"],
+            dependencies: [
+                "NESWallpaperCore", "CShm", "CFCEUX",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/WallpaperApp"
         ),
         // Screensaver plugin: read-only client of the app's frame files.
