@@ -16,6 +16,7 @@ final class SettingsModel: ObservableObject {
     @Published var rotationMinutes = 10
     @Published var includeROMsWithoutMovies = true
     @Published var videoFilter = VideoFilter.none
+    @Published var showDockIcon = false
 
     var onApply: (() -> Void)?
 
@@ -28,6 +29,7 @@ final class SettingsModel: ObservableObject {
         rotationMinutes = settings.rotationMinutes
         includeROMsWithoutMovies = settings.includeROMsWithoutMovies
         videoFilter = settings.videoFilter
+        showDockIcon = settings.showDockIcon
     }
 
     func apply() {
@@ -39,6 +41,7 @@ final class SettingsModel: ObservableObject {
         settings.rotationMinutes = max(0, rotationMinutes)
         settings.includeROMsWithoutMovies = includeROMsWithoutMovies
         settings.videoFilter = videoFilter
+        settings.showDockIcon = showDockIcon
         settings.save()
         onApply?()
     }
@@ -242,6 +245,11 @@ struct SettingsView: View {
 
     private var generalTab: some View {
         Form {
+            Section {
+                Toggle("Show App Icon in Dock", isOn: $model.showDockIcon)
+            } footer: {
+                note(Text("When off, NES Wallpaper appears only in the menu bar."))
+            }
             Section {
                 Toggle("Launch at Login", isOn: Binding(
                     get: { loginItem.enabled },
