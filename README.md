@@ -26,7 +26,8 @@ UberNES “Nintendo Saver.”
 - CRT-style video filters and a 30 fps Low Power Mode
 - Live keyboard takeover for playing any tile
 - An optional companion screensaver, including lock-screen playback
-- Menu bar controls, launch at login, and remappable controls
+- Menu bar controls, a configurable global takeover shortcut, launch at login,
+  and remappable controls
 
 ## Install
 
@@ -38,6 +39,10 @@ NES Wallpaper requires macOS 14 or later.
 
 The app lives in the menu bar. You can download FM2 movies from the built-in
 TASVideos browser; NES Wallpaper matches them to compatible ROMs by checksum.
+
+Press **Control-Option-G** from any app to raise the wallpaper and click the
+game you want to play. Change or disable this shortcut in **Settings →
+Controls**.
 
 To use the screensaver, open **Settings → General**, install it, then select
 **NES Wallpaper** in macOS **System Settings → Wallpaper → Screen Saver**.

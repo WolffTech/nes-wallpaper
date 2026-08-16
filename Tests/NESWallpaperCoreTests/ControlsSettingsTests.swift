@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 import XCTest
+import AppKit
 @testable import nes_wallpaper
 @testable import NESWallpaperCore
 
@@ -72,5 +73,96 @@ final class KeyNameTests: XCTestCase {
 
     func testUnknownKeyCodeFallsBack() {
         XCTAssertEqual(KeyName.string(for: 999), "Key 999")
+    }
+}
+
+final class GlobalShortcutTests: XCTestCase {
+    func testDefaultShortcutIsControlOptionG() {
+        XCTAssertEqual(GlobalShortcut.defaultTakeover.keyCode, 5)
+        XCTAssertEqual(GlobalShortcut.defaultTakeover.modifiers, [.control, .option])
+        XCTAssertEqual(GlobalShortcut.defaultTakeover.displayName, "⌃⌥G")
+    }
+
+    func testRequiresControlOptionOrCommand() {
+        XCTAssertNil(GlobalShortcut(keyCode: 5, modifiers: []))
+        XCTAssertNil(GlobalShortcut(keyCode: 5, modifiers: [.shift]))
+        XCTAssertNotNil(GlobalShortcut(keyCode: 5, modifiers: [.control]))
+        XCTAssertNotNil(GlobalShortcut(keyCode: 5, modifiers: [.option]))
+        XCTAssertNotNil(GlobalShortcut(keyCode: 5, modifiers: [.command]))
+    }
+
+    func testRejectsEscapeAndModifierKeys() {
+        XCTAssertNil(GlobalShortcut(keyCode: 53, modifiers: [.command]))
+        XCTAssertNil(GlobalShortcut(keyCode: 55, modifiers: [.option]))
+        XCTAssertNil(GlobalShortcut(keyCode: 57, modifiers: [.control]))
+        XCTAssertNil(GlobalShortcut(keyCode: 63, modifiers: [.control]))
+    }
+
+    func testNormalizesUnrelatedFlagsAndRoundTrips() throws {
+        let shortcut = try XCTUnwrap(GlobalShortcut(
+            keyCode: 11, modifiers: [.command, .shift, .capsLock, .numericPad]))
+        XCTAssertEqual(shortcut.modifiers, [.command, .shift])
+        XCTAssertEqual(GlobalShortcut(storedValue: shortcut.storedValue), shortcut)
+    }
+}
+
+final class TakeoverShortcutModelTests: XCTestCase {
+    func testCaptureSuspendsThenAppliesShortcut() throws {
+        let model = ControlsModel()
+        var recordingChanges: [Bool] = []
+        var changedShortcut: GlobalShortcut?
+        model.onShortcutRecordingChanged = { recordingChanges.append($0) }
+        model.onShortcutChanged = { changedShortcut = $0; return nil }
+
+        model.recordShortcut()
+        model.assignShortcut(keyCode: 11, modifiers: [.command, .shift])
+
+        let expected = try XCTUnwrap(GlobalShortcut(
+            keyCode: 11, modifiers: [.command, .shift]))
+        XCTAssertEqual(recordingChanges, [true, false])
+        XCTAssertEqual(changedShortcut, expected)
+        XCTAssertEqual(model.takeoverShortcut, expected)
+        XCTAssertFalse(model.recordingShortcut)
+    }
+
+    func testInvalidCaptureRemainsArmed() {
+        let model = ControlsModel()
+        var changeCount = 0
+        model.onShortcutChanged = { _ in changeCount += 1; return nil }
+
+        model.recordShortcut()
+        model.assignShortcut(keyCode: 5, modifiers: [.shift])
+
+        XCTAssertTrue(model.recordingShortcut)
+        XCTAssertEqual(changeCount, 0)
+        XCTAssertNotNil(model.shortcutMessage)
+    }
+
+    func testRegistrationFailureKeepsPreviousShortcut() {
+        let model = ControlsModel()
+        let previous = GlobalShortcut.defaultTakeover
+        model.takeoverShortcut = previous
+        model.onShortcutChanged = { _ in "That shortcut is already in use." }
+
+        model.recordShortcut()
+        model.assignShortcut(keyCode: 11, modifiers: [.command])
+
+        XCTAssertEqual(model.takeoverShortcut, previous)
+        XCTAssertEqual(model.shortcutMessage, "That shortcut is already in use.")
+        XCTAssertFalse(model.recordingShortcut)
+    }
+
+    func testClearDisablesShortcut() {
+        let model = ControlsModel()
+        var didClear = false
+        model.onShortcutChanged = { shortcut in
+            didClear = shortcut == nil
+            return nil
+        }
+
+        model.clearShortcut()
+
+        XCTAssertTrue(didClear)
+        XCTAssertNil(model.takeoverShortcut)
     }
 }

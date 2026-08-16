@@ -17,13 +17,28 @@ final class ControlsModel: ObservableObject {
     @Published var recording: String?
     /// Brief footer message after a rejected capture.
     @Published var message: String?
+    /// Global takeover shortcut and its independent capture state.
+    @Published var takeoverShortcut: GlobalShortcut?
+    @Published var recordingShortcut = false
+    @Published var shortcutMessage: String?
 
     var onChanged: (() -> Void)?
+    /// Returns a user-facing registration error, or nil after saving.
+    var onShortcutChanged: ((GlobalShortcut?) -> String?)?
+    var onShortcutRecordingChanged: ((Bool) -> Void)?
+
+    init() {
+        takeoverShortcut = WallpaperSettings.load().takeoverShortcut
+    }
 
     func load() {
+        if recordingShortcut { onShortcutRecordingChanged?(false) }
         assignments = WallpaperSettings.load().takeoverControls
+        takeoverShortcut = WallpaperSettings.load().takeoverShortcut
         recording = nil
+        recordingShortcut = false
         message = nil
+        shortcutMessage = nil
     }
 
     private func save() {
@@ -48,12 +63,70 @@ final class ControlsModel: ObservableObject {
     }
 
     func record(_ button: String) {
+        cancelShortcutRecording()
         recording = button
         message = nil
     }
 
     func cancelRecording() {
         recording = nil
+    }
+
+    var isRecording: Bool { recording != nil || recordingShortcut }
+
+    func recordShortcut() {
+        recording = nil
+        recordingShortcut = true
+        shortcutMessage = nil
+        onShortcutRecordingChanged?(true)
+    }
+
+    func cancelShortcutRecording() {
+        guard recordingShortcut else { return }
+        recordingShortcut = false
+        onShortcutRecordingChanged?(false)
+    }
+
+    func cancelAllRecording() {
+        cancelRecording()
+        cancelShortcutRecording()
+    }
+
+    func assignShortcut(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
+        guard recordingShortcut else { return }
+        guard let shortcut = GlobalShortcut(keyCode: keyCode, modifiers: modifiers) else {
+            shortcutMessage = "Use a key with Control, Option, or Command."
+            return
+        }
+        recordingShortcut = false
+        if let error = onShortcutChanged?(shortcut) {
+            shortcutMessage = error
+        } else {
+            takeoverShortcut = shortcut
+            shortcutMessage = nil
+        }
+        onShortcutRecordingChanged?(false)
+    }
+
+    func clearShortcut() {
+        cancelShortcutRecording()
+        if let error = onShortcutChanged?(nil) {
+            shortcutMessage = error
+        } else {
+            takeoverShortcut = nil
+            shortcutMessage = nil
+        }
+    }
+
+    func restoreDefaultShortcut() {
+        cancelShortcutRecording()
+        let shortcut = GlobalShortcut.defaultTakeover
+        if let error = onShortcutChanged?(shortcut) {
+            shortcutMessage = error
+        } else {
+            takeoverShortcut = shortcut
+            shortcutMessage = nil
+        }
     }
 
     /// Complete an armed capture: bind the key to the recorded button
@@ -174,12 +247,15 @@ struct KeyCaptureView: NSViewRepresentable {
         override var acceptsFirstResponder: Bool { true }
 
         override func keyDown(with event: NSEvent) {
-            guard let model, model.recording != nil else {
+            guard let model, model.isRecording else {
                 super.keyDown(with: event)
                 return
             }
             if event.keyCode == TakeoverKeymap.escapeKeyCode {
-                model.cancelRecording()
+                model.cancelAllRecording()
+            } else if model.recordingShortcut {
+                model.assignShortcut(
+                    keyCode: event.keyCode, modifiers: event.modifierFlags)
             } else {
                 model.assign(keyCode: event.keyCode)
             }
@@ -189,7 +265,7 @@ struct KeyCaptureView: NSViewRepresentable {
         // while recording (a held Cmd is ignored; only a *pressed* Cmd key
         // itself records, via flagsChanged).
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            guard let model, model.recording != nil,
+            guard let model, model.isRecording,
                   event.type == .keyDown else {
                 return super.performKeyEquivalent(with: event)
             }
@@ -198,10 +274,12 @@ struct KeyCaptureView: NSViewRepresentable {
         }
 
         override func flagsChanged(with event: NSEvent) {
-            guard let model, model.recording != nil else {
+            guard let model, model.isRecording else {
                 super.flagsChanged(with: event)
                 return
             }
+            // A global shortcut is a chord; wait for its non-modifier key.
+            if model.recordingShortcut { return }
             if let bit = TakeoverKeymap.modifierFlagBits[event.keyCode] {
                 // Assign on press only; the release after assigning (or of
                 // an unrelated held modifier) is ignored.
@@ -215,8 +293,8 @@ struct KeyCaptureView: NSViewRepresentable {
 
         // Clicking anywhere else (or Tab moving focus) disarms recording.
         override func resignFirstResponder() -> Bool {
-            if let model, model.recording != nil {
-                DispatchQueue.main.async { model.cancelRecording() }
+            if let model, model.isRecording {
+                DispatchQueue.main.async { model.cancelAllRecording() }
             }
             return super.resignFirstResponder()
         }
@@ -231,7 +309,7 @@ struct KeyCaptureView: NSViewRepresentable {
     func updateNSView(_ view: CaptureView, context: Context) {
         view.model = model
         guard let window = view.window else { return }
-        if model.recording != nil {
+        if model.isRecording {
             if window.firstResponder !== view {
                 window.makeFirstResponder(view)
             }
@@ -253,6 +331,33 @@ struct ControlsPane: View {
 
     var body: some View {
         Form {
+            Section {
+                LabeledContent("Take Over Game") {
+                    HStack {
+                        Button {
+                            model.recordShortcut()
+                        } label: {
+                            Text(model.recordingShortcut
+                                 ? "Press shortcut\u{2026}"
+                                 : model.takeoverShortcut?.displayName ?? "None")
+                                .frame(minWidth: 100)
+                        }
+                        Button("Clear") { model.clearShortcut() }
+                            .disabled(model.takeoverShortcut == nil)
+                    }
+                }
+                LabeledContent("Default") {
+                    Button("Restore \(GlobalShortcut.defaultTakeover.displayName)") {
+                        model.restoreDefaultShortcut()
+                    }
+                }
+            } header: {
+                Text("Global Shortcut")
+            } footer: {
+                shortcutFooter
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             Section("D-Pad") {
                 ForEach(Self.dPad, id: \.1) { row(label: $0.0, button: $0.1) }
             }
@@ -271,6 +376,13 @@ struct ControlsPane: View {
         }
         .formStyle(.grouped)
         .background(KeyCaptureView(model: model))
+    }
+
+    private var shortcutFooter: Text {
+        if let message = model.shortcutMessage {
+            return Text(message).foregroundStyle(.red)
+        }
+        return Text("Works from any app. Press Esc to cancel recording. Changes take effect immediately.")
     }
 
     private var footerText: Text {

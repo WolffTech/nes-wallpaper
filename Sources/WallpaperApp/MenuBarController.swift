@@ -16,6 +16,7 @@ struct WallpaperSettings {
     static let videoFilterKey = "VideoFilter"
     static let lowPowerModeKey = "LowPowerMode"
     static let takeoverControlsKey = "TakeoverControls"
+    static let takeoverShortcutKey = "TakeoverShortcut"
     static let showDockIconKey = "ShowDockIcon"
 
     var romsDir: String?
@@ -30,12 +31,26 @@ struct WallpaperSettings {
     /// Takeover key overrides, button name → keyCode; empty = all defaults
     /// (see TakeoverKeymap.init(buttonAssignments:)).
     var takeoverControls: [String: Int]
+    /// nil means the user explicitly disabled the global shortcut. A missing
+    /// preference uses GlobalShortcut.defaultTakeover.
+    var takeoverShortcut: GlobalShortcut?
 
     var rotationInterval: TimeInterval? {
         rotationMinutes > 0 ? TimeInterval(rotationMinutes) * 60 : nil
     }
 
     static func load(defaults: UserDefaults = .standard) -> WallpaperSettings {
+        let shortcut: GlobalShortcut?
+        if defaults.object(forKey: takeoverShortcutKey) == nil {
+            shortcut = .defaultTakeover
+        } else if let stored = defaults.dictionary(forKey: takeoverShortcutKey),
+                  stored.isEmpty {
+            shortcut = nil
+        } else if let stored = defaults.dictionary(forKey: takeoverShortcutKey) {
+            shortcut = GlobalShortcut(storedValue: stored) ?? .defaultTakeover
+        } else {
+            shortcut = .defaultTakeover
+        }
         return WallpaperSettings(
             romsDir: defaults.string(forKey: romsDirKey),
             moviesDir: defaults.string(forKey: moviesDirKey),
@@ -49,7 +64,8 @@ struct WallpaperSettings {
             lowPowerMode: defaults.bool(forKey: lowPowerModeKey),
             showDockIcon: defaults.bool(forKey: showDockIconKey),
             takeoverControls: defaults.dictionary(forKey: takeoverControlsKey)?
-                .compactMapValues { $0 as? Int } ?? [:])
+                .compactMapValues { $0 as? Int } ?? [:],
+            takeoverShortcut: shortcut)
     }
 
     func save(defaults: UserDefaults = .standard) {
@@ -63,6 +79,8 @@ struct WallpaperSettings {
         defaults.set(lowPowerMode, forKey: Self.lowPowerModeKey)
         defaults.set(showDockIcon, forKey: Self.showDockIconKey)
         defaults.set(takeoverControls, forKey: Self.takeoverControlsKey)
+        defaults.set(takeoverShortcut?.storedValue ?? [:],
+                     forKey: Self.takeoverShortcutKey)
     }
 }
 
@@ -78,6 +96,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var controller: WallpaperController?
     private var settingsWindow: SettingsWindowController?
     private var browserWindow: TASBrowserWindowController?
+    private var takeoverHotKey: GlobalHotKey?
 
     /// User's pause intent; sticks across stop/start and screen lock (the
     /// controller combines it with its own automatic pause conditions).
@@ -90,6 +109,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     override init() {
         super.init()
+
+        do {
+            let hotKey = try GlobalHotKey { [weak self] in self?.selectGameByClicking() }
+            takeoverHotKey = hotKey
+            try hotKey.setShortcut(WallpaperSettings.load().takeoverShortcut)
+        } catch {
+            log("global takeover shortcut unavailable: \(error.localizedDescription)")
+        }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = MenuBarIcon.makeImage()
@@ -178,7 +205,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         let submenu = NSMenu()
         submenu.autoenablesItems = false
-        let clickItem = NSMenuItem(title: "Click a Game on Screen",
+        var clickTitle = "Click a Game on Screen"
+        if let shortcut = WallpaperSettings.load().takeoverShortcut {
+            clickTitle += " (\(shortcut.displayName))"
+        }
+        let clickItem = NSMenuItem(title: clickTitle,
                                    action: #selector(selectGameByClicking), keyEquivalent: "")
         clickItem.target = self
         submenu.addItem(clickItem)
@@ -265,6 +296,35 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     func controlsChanged() {
         controller?.takeoverKeymap =
             TakeoverKeymap(buttonAssignments: WallpaperSettings.load().takeoverControls)
+    }
+
+    /// Suspend registration while the recorder has focus so the old shortcut
+    /// reaches the settings window, then restore the persisted assignment.
+    func shortcutRecordingChanged(_ recording: Bool) {
+        do {
+            try takeoverHotKey?.setShortcut(
+                recording ? nil : WallpaperSettings.load().takeoverShortcut)
+        } catch {
+            log("global takeover shortcut unavailable: \(error.localizedDescription)")
+        }
+    }
+
+    /// Register first and persist only after success. GlobalHotKey restores
+    /// the previous registration if the new chord is unavailable.
+    func changeTakeoverShortcut(_ shortcut: GlobalShortcut?) -> String? {
+        guard let takeoverHotKey else {
+            return "Global shortcuts aren\u{2019}t available right now."
+        }
+        do {
+            try takeoverHotKey.setShortcut(shortcut)
+            var settings = WallpaperSettings.load()
+            settings.takeoverShortcut = shortcut
+            settings.save()
+            refreshMenuTitles()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     /// Build a tile source from the configured library: each tile plays a

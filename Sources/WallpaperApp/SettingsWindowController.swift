@@ -346,6 +346,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         model.onApply = { [weak menuBar] in menuBar?.settingsApplied() }
         controls.onChanged = { [weak menuBar] in menuBar?.controlsChanged() }
+        controls.onShortcutChanged = { [weak menuBar] shortcut in
+            menuBar?.changeTakeoverShortcut(shortcut)
+                ?? "Global shortcuts aren\u{2019}t available right now."
+        }
+        controls.onShortcutRecordingChanged = { [weak menuBar] recording in
+            menuBar?.shortcutRecordingChanged(recording)
+        }
         window.contentViewController = NSHostingController(
             rootView: SettingsView(model: model, loginItem: loginItem,
                                    saverInstall: saverInstall, controls: controls,
@@ -372,6 +379,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Hide instead of tearing anything down; the controller is reused.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        controls.cancelAllRecording()
         sender.orderOut(nil)
         return false
     }
