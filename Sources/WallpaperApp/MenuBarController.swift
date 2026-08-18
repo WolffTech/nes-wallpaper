@@ -131,29 +131,31 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
 
-        startStopItem.target = self
-        startStopItem.action = #selector(toggleWallpaper)
-        menu.addItem(startStopItem)
-
-        pauseItem.target = self
-        pauseItem.action = #selector(togglePause)
-        menu.addItem(pauseItem)
-
+        // Games first: playing one and finding more, ordered by use.
         takeoverItem.target = self
         menu.addItem(takeoverItem)
 
-        menu.addItem(.separator())
         let browserItem = NSMenuItem(title: "Browse Tool-Assisted Speedruns",
                                      action: #selector(openBrowser), keyEquivalent: "")
         browserItem.target = self
         menu.addItem(browserItem)
 
+        // Wallpaper/emulation state, the most drastic action last.
         menu.addItem(.separator())
+        pauseItem.target = self
+        pauseItem.action = #selector(togglePause)
+        menu.addItem(pauseItem)
+
         lowPowerItem.title = "Low Power Mode"
         lowPowerItem.target = self
         lowPowerItem.action = #selector(toggleLowPowerMode)
         menu.addItem(lowPowerItem)
 
+        startStopItem.target = self
+        startStopItem.action = #selector(toggleWallpaper)
+        menu.addItem(startStopItem)
+
+        menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings",
                                       action: #selector(openSettings), keyEquivalent: "")
         settingsItem.target = self
@@ -163,7 +165,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // needs no refreshMenuTitles() handling.
         if UpdaterController.available {
             let updater = UpdaterController()
-            let checkItem = NSMenuItem(title: "Check for Updates\u{2026}",
+            let checkItem = NSMenuItem(title: "Check for Updates",
                                        action: nil, keyEquivalent: "")
             updater.bind(menuItem: checkItem)
             menu.addItem(checkItem)
@@ -171,7 +173,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit",
+        menu.addItem(NSMenuItem(title: "Quit NES Wallpaper",
                                 action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         item.menu = menu
