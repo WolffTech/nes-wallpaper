@@ -370,18 +370,6 @@ struct ControlsPane: View {
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Section {
-                Toggle("Enlarge game to full screen",
-                       isOn: Binding(
-                           get: { model.fullscreenTakeover },
-                           set: { model.setFullscreenTakeover($0) }))
-            } header: {
-                Text("While Playing")
-            } footer: {
-                Text("The game you take over fills its display; other displays keep the dimmed grid. When off, the game keeps its tile size.")
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
             Section("D-Pad") {
                 ForEach(Self.dPad, id: \.1) { row(label: $0.0, button: $0.1) }
             }
