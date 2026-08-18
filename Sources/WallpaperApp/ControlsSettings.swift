@@ -21,6 +21,8 @@ final class ControlsModel: ObservableObject {
     @Published var takeoverShortcut: GlobalShortcut?
     @Published var recordingShortcut = false
     @Published var shortcutMessage: String?
+    /// Fill the takeover display with the played tile during live play.
+    @Published var fullscreenTakeover = false
 
     var onChanged: (() -> Void)?
     /// Returns a user-facing registration error, or nil after saving.
@@ -29,12 +31,14 @@ final class ControlsModel: ObservableObject {
 
     init() {
         takeoverShortcut = WallpaperSettings.load().takeoverShortcut
+        fullscreenTakeover = WallpaperSettings.load().fullscreenTakeover
     }
 
     func load() {
         if recordingShortcut { onShortcutRecordingChanged?(false) }
         assignments = WallpaperSettings.load().takeoverControls
         takeoverShortcut = WallpaperSettings.load().takeoverShortcut
+        fullscreenTakeover = WallpaperSettings.load().fullscreenTakeover
         recording = nil
         recordingShortcut = false
         message = nil
@@ -44,6 +48,14 @@ final class ControlsModel: ObservableObject {
     private func save() {
         var settings = WallpaperSettings.load()
         settings.takeoverControls = assignments
+        settings.save()
+        onChanged?()
+    }
+
+    func setFullscreenTakeover(_ enabled: Bool) {
+        fullscreenTakeover = enabled
+        var settings = WallpaperSettings.load()
+        settings.fullscreenTakeover = enabled
         settings.save()
         onChanged?()
     }

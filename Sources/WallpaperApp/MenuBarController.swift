@@ -18,6 +18,7 @@ struct WallpaperSettings {
     static let takeoverControlsKey = "TakeoverControls"
     static let takeoverShortcutKey = "TakeoverShortcut"
     static let showDockIconKey = "ShowDockIcon"
+    static let fullscreenTakeoverKey = "FullscreenTakeover"
 
     var romsDir: String?
     var moviesDir: String?
@@ -34,6 +35,8 @@ struct WallpaperSettings {
     /// nil means the user explicitly disabled the global shortcut. A missing
     /// preference uses GlobalShortcut.defaultTakeover.
     var takeoverShortcut: GlobalShortcut?
+    /// Fill the takeover display with the played tile during live play.
+    var fullscreenTakeover: Bool
 
     var rotationInterval: TimeInterval? {
         rotationMinutes > 0 ? TimeInterval(rotationMinutes) * 60 : nil
@@ -65,7 +68,8 @@ struct WallpaperSettings {
             showDockIcon: defaults.bool(forKey: showDockIconKey),
             takeoverControls: defaults.dictionary(forKey: takeoverControlsKey)?
                 .compactMapValues { $0 as? Int } ?? [:],
-            takeoverShortcut: shortcut)
+            takeoverShortcut: shortcut,
+            fullscreenTakeover: defaults.bool(forKey: fullscreenTakeoverKey))
     }
 
     func save(defaults: UserDefaults = .standard) {
@@ -81,6 +85,7 @@ struct WallpaperSettings {
         defaults.set(takeoverControls, forKey: Self.takeoverControlsKey)
         defaults.set(takeoverShortcut?.storedValue ?? [:],
                      forKey: Self.takeoverShortcutKey)
+        defaults.set(fullscreenTakeover, forKey: Self.fullscreenTakeoverKey)
     }
 }
 
@@ -126,29 +131,31 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
 
-        startStopItem.target = self
-        startStopItem.action = #selector(toggleWallpaper)
-        menu.addItem(startStopItem)
-
-        pauseItem.target = self
-        pauseItem.action = #selector(togglePause)
-        menu.addItem(pauseItem)
-
+        // Games first: playing one and finding more, ordered by use.
         takeoverItem.target = self
         menu.addItem(takeoverItem)
 
-        menu.addItem(.separator())
         let browserItem = NSMenuItem(title: "Browse Tool-Assisted Speedruns",
                                      action: #selector(openBrowser), keyEquivalent: "")
         browserItem.target = self
         menu.addItem(browserItem)
 
+        // Wallpaper/emulation state, the most drastic action last.
         menu.addItem(.separator())
+        pauseItem.target = self
+        pauseItem.action = #selector(togglePause)
+        menu.addItem(pauseItem)
+
         lowPowerItem.title = "Low Power Mode"
         lowPowerItem.target = self
         lowPowerItem.action = #selector(toggleLowPowerMode)
         menu.addItem(lowPowerItem)
 
+        startStopItem.target = self
+        startStopItem.action = #selector(toggleWallpaper)
+        menu.addItem(startStopItem)
+
+        menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings",
                                       action: #selector(openSettings), keyEquivalent: "")
         settingsItem.target = self
@@ -158,7 +165,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // needs no refreshMenuTitles() handling.
         if UpdaterController.available {
             let updater = UpdaterController()
-            let checkItem = NSMenuItem(title: "Check for Updates\u{2026}",
+            let checkItem = NSMenuItem(title: "Check for Updates",
                                        action: nil, keyEquivalent: "")
             updater.bind(menuItem: checkItem)
             menu.addItem(checkItem)
@@ -166,7 +173,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit",
+        menu.addItem(NSMenuItem(title: "Quit NES Wallpaper",
                                 action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         item.menu = menu
@@ -302,12 +309,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         startWallpaper(interactive: true)
     }
 
-    /// Called by the Controls tab after each saved key change: a keymap
-    /// swap needs no restart, only a fresh map for the next takeover (an
-    /// active session keeps the one it started with).
+    /// Called by the Controls tab after each saved change: a keymap swap
+    /// needs no restart, only a fresh map for the next takeover (an active
+    /// session keeps the one it started with), and the fullscreen toggle
+    /// applies live to the running controller.
     func controlsChanged() {
+        let settings = WallpaperSettings.load()
         controller?.takeoverKeymap =
-            TakeoverKeymap(buttonAssignments: WallpaperSettings.load().takeoverControls)
+            TakeoverKeymap(buttonAssignments: settings.takeoverControls)
+        controller?.fullscreenTakeover = settings.fullscreenTakeover
     }
 
     /// Suspend registration while the recorder has focus so the old shortcut
@@ -395,6 +405,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             controller.userPaused = userWantsPause
             controller.takeoverKeymap =
                 TakeoverKeymap(buttonAssignments: settings.takeoverControls)
+            controller.fullscreenTakeover = settings.fullscreenTakeover
             controller.onTakeoverEnded = { [weak self] in self?.refreshMenuTitles() }
             self.controller = controller
         } catch {

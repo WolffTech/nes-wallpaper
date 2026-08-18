@@ -165,6 +165,13 @@ public final class TileGridRenderer {
         didSet { needsPresent = needsPresent || emphasis != oldValue }
     }
 
+    /// When set, this window draws only that tile (controller index),
+    /// aspect-fit to the whole drawable at full brightness; nil restores
+    /// the grid. Emphasis is ignored while set.
+    public var fullscreenTile: Int? {
+        didSet { needsPresent = needsPresent || fullscreenTile != oldValue }
+    }
+
     public init(context: MetalContext, view: WallpaperMetalView,
          columns: Int, rows: Int, tileWidth: Int, tileHeight: Int) throws {
         self.context = context
@@ -193,6 +200,18 @@ public final class TileGridRenderer {
     public func invalidateTile(_ localIndex: Int) {
         guard lastUploaded.indices.contains(localIndex) else { return }
         lastUploaded[localIndex] = nil
+    }
+
+    /// Aspect-fit a texture centered in `cell`, both in drawable pixels.
+    public static func aspectFitRect(textureWidth: Int, textureHeight: Int,
+                                     in cell: CGRect) -> CGRect {
+        let scale = min(cell.width / CGFloat(textureWidth),
+                        cell.height / CGFloat(textureHeight))
+        let width = CGFloat(textureWidth) * scale
+        let height = CGFloat(textureHeight) * scale
+        return CGRect(x: cell.minX + (cell.width - width) / 2,
+                      y: cell.minY + (cell.height - height) / 2,
+                      width: width, height: height)
     }
 
     /// Upload changed tiles and draw the grid. `tiles` is the controller's
@@ -238,36 +257,53 @@ public final class TileGridRenderer {
 
         let drawableWidth = CGFloat(drawable.texture.width)
         let drawableHeight = CGFloat(drawable.texture.height)
-        let cellWidth = drawableWidth / CGFloat(columns)
-        let cellHeight = drawableHeight / CGFloat(rows)
 
-        for (local, index) in range.enumerated() {
-            guard index < tiles.count, lastUploaded[local] != nil else { continue }
-            let texture = textures[local]
-            // Aspect-fit letterbox in the cell (matches the old
-            // .resizeAspect), computed in drawable pixels; row 0 = top.
-            let scale = min(cellWidth / CGFloat(texture.width),
-                            cellHeight / CGFloat(texture.height))
-            let width = CGFloat(texture.width) * scale
-            let height = CGFloat(texture.height) * scale
-            let col = local % columns
-            let row = local / columns
-            let x = CGFloat(col) * cellWidth + (cellWidth - width) / 2
-            let y = CGFloat(row) * cellHeight + (cellHeight - height) / 2
+        // Aspect-fit letterbox in the cell (matches the old .resizeAspect),
+        // computed in drawable pixels with row 0 = top, converted to NDC.
+        func drawQuad(texture: MTLTexture, in cell: CGRect, brightness: Float) {
+            let fit = Self.aspectFitRect(textureWidth: texture.width,
+                                         textureHeight: texture.height, in: cell)
             var rect = SIMD4<Float>(
-                Float(2 * x / drawableWidth - 1),
-                Float(1 - 2 * (y + height) / drawableHeight),
-                Float(2 * width / drawableWidth),
-                Float(2 * height / drawableHeight))
+                Float(2 * fit.minX / drawableWidth - 1),
+                Float(1 - 2 * fit.maxY / drawableHeight),
+                Float(2 * fit.width / drawableWidth),
+                Float(2 * fit.height / drawableHeight))
             encoder.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
-            var brightness: Float
-            switch emphasis {
-            case .none: brightness = 1
-            case .spotlight(let tile): brightness = tile == index ? 1 : 0.35
-            }
+            var brightness = brightness
             encoder.setFragmentBytes(&brightness, length: MemoryLayout<Float>.size, index: 0)
             encoder.setFragmentTexture(texture, index: 0)
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
+
+        if let fullscreen = fullscreenTile, range.contains(fullscreen),
+           fullscreen < tiles.count {
+            // Takeover fullscreen: only the played tile, filling the window;
+            // the cleared pass provides the letterbox bars. An unpublished
+            // tile stays black, as it would in the grid.
+            let local = fullscreen - range.lowerBound
+            if lastUploaded[local] != nil {
+                drawQuad(texture: textures[local],
+                         in: CGRect(x: 0, y: 0,
+                                    width: drawableWidth, height: drawableHeight),
+                         brightness: 1)
+            }
+        } else {
+            let cellWidth = drawableWidth / CGFloat(columns)
+            let cellHeight = drawableHeight / CGFloat(rows)
+            for (local, index) in range.enumerated() {
+                guard index < tiles.count, lastUploaded[local] != nil else { continue }
+                let col = local % columns
+                let row = local / columns
+                let cell = CGRect(x: CGFloat(col) * cellWidth,
+                                  y: CGFloat(row) * cellHeight,
+                                  width: cellWidth, height: cellHeight)
+                let brightness: Float
+                switch emphasis {
+                case .none: brightness = 1
+                case .spotlight(let tile): brightness = tile == index ? 1 : 0.35
+                }
+                drawQuad(texture: textures[local], in: cell, brightness: brightness)
+            }
         }
 
         encoder.endEncoding()

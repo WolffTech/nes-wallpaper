@@ -138,6 +138,13 @@ public final class WallpaperController {
     /// keeps the map it started with.
     public var takeoverKeymap = TakeoverKeymap.standard
 
+    /// When true, the tile being played live fills the takeover display,
+    /// aspect-fit; other displays keep the dimmed grid. Settable while
+    /// running: toggling during a session resizes immediately.
+    public var fullscreenTakeover = false {
+        didSet { applyFullscreenState() }
+    }
+
     /// The active live-play session, at most one. The session tile is
     /// excluded from rotation and pause while the user is playing it.
     private var takeoverSession: TakeoverSession?
@@ -425,6 +432,17 @@ public final class WallpaperController {
         for slot in slots { slot.renderer.emphasis = emphasis }
     }
 
+    /// Reconcile every slot's renderer with the takeover/fullscreen state;
+    /// safe to call any time (no session restores every slot to the grid).
+    private func applyFullscreenState() {
+        let session = takeoverSession
+        for slot in slots {
+            slot.renderer.fullscreenTile =
+                (fullscreenTakeover && slot.window === session?.window)
+                    ? session?.tileIndex : nil
+        }
+    }
+
     /// Start live play on one tile: the wallpaper window on the display
     /// under the mouse is raised and captures the keyboard, and the tile's
     /// helper switches from movie playback to the live pad. One session at
@@ -444,6 +462,7 @@ public final class WallpaperController {
         takeoverSession = session
         session.start()
         setEmphasis(.spotlight(tileIndex))
+        applyFullscreenState()
         // Present at full rate for input latency even in Low Power Mode;
         // the helper already publishes every frame while taken over.
         slot.displayLink.preferredFrameRateRange = CAFrameRateRange(
@@ -460,6 +479,7 @@ public final class WallpaperController {
         takeoverSession = nil
         session.stop()
         setEmphasis(.none)
+        applyFullscreenState()
         for slot in slots { configureFrameRate(for: slot.displayLink) }
         Self.log("takeover ended on tile \(session.tileIndex)")
         onTakeoverEnded?()
@@ -656,6 +676,8 @@ public final class WallpaperController {
            !slots.contains(where: { $0.window === session.window }) {
             endTakeover()
         }
+        // New slots default to the grid; re-assert fullscreen on a survivor.
+        applyFullscreenState()
         // Displays coming or going changes what "all occluded" means.
         updatePauseState()
     }

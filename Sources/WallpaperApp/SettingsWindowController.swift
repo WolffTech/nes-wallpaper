@@ -285,6 +285,16 @@ struct SettingsView: View {
             } footer: {
                 note(Text("Minutes between tile shuffles. 0 means never rotate."))
             }
+            Section {
+                Toggle("Enlarge game to full screen",
+                       isOn: Binding(
+                           get: { controls.fullscreenTakeover },
+                           set: { controls.setFullscreenTakeover($0) }))
+            } header: {
+                Text("While Playing")
+            } footer: {
+                note(Text("The game you take over fills its display; other displays keep the dimmed grid. When off, the game keeps its tile size. Takes effect immediately; no need to press Apply."))
+            }
         }
         .formStyle(.grouped)
     }

@@ -59,6 +59,22 @@ final class WallpaperSettingsTests: XCTestCase {
         }
     }
 
+    func testFullscreenTakeoverIsOffByDefault() {
+        withDefaults { defaults in
+            XCTAssertFalse(WallpaperSettings.load(defaults: defaults).fullscreenTakeover)
+        }
+    }
+
+    func testFullscreenTakeoverRoundTrips() {
+        withDefaults { defaults in
+            var settings = WallpaperSettings.load(defaults: defaults)
+            settings.fullscreenTakeover = true
+            settings.save(defaults: defaults)
+
+            XCTAssertTrue(WallpaperSettings.load(defaults: defaults).fullscreenTakeover)
+        }
+    }
+
     private func withDefaults(_ body: (UserDefaults) throws -> Void) rethrows {
         let suiteName = "WallpaperSettingsTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
