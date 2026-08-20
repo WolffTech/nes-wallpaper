@@ -353,7 +353,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// random pick from the library (same policy as the CLI's library mode).
     /// Returns nil when the folders are unset or yield nothing playable.
     private static func makeTileSource(settings: WallpaperSettings)
-        -> ((Set<String>) -> TileSpec?)?
+        -> ((Set<String>, TileSelectionOccasion) -> TileSpec?)?
     {
         guard let romsDir = settings.romsDir, !romsDir.isEmpty,
               let moviesDir = settings.moviesDir, !moviesDir.isEmpty else { return nil }
@@ -365,10 +365,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             return nil
         }
         // The library is immutable; exclusions may temporarily exhaust it.
-        return { excludedROMs in
+        // Startup tiles play from power-on so the grid appears immediately;
+        // random mid-movie starts are reserved for rotations, where the old
+        // tile covers the fast-forward.
+        return { excludedROMs, occasion in
             library.randomTileSpec(
                 includeROMsWithoutMovies: includeROMs,
-                excludingROMs: excludedROMs)
+                excludingROMs: excludedROMs,
+                randomizedStart: occasion == .rotation)
         }
     }
 

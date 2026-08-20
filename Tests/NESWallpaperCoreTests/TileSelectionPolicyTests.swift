@@ -11,7 +11,7 @@ final class TileSelectionPolicyTests: XCTestCase {
 
     func testStartupUsesUnusedGamesUntilCatalogIsExhausted() throws {
         let catalog = ["a", "b", "c"]
-        let source: TileSelectionPolicy.Source = { excluded in
+        let source: TileSelectionPolicy.Source = { excluded, _ in
             catalog.first { !excluded.contains($0) }.map(self.spec)
         }
 
@@ -25,7 +25,7 @@ final class TileSelectionPolicyTests: XCTestCase {
     }
 
     func testStartupFallsBackWhenGridIsLargerThanCatalog() throws {
-        let source: TileSelectionPolicy.Source = { excluded in
+        let source: TileSelectionPolicy.Source = { excluded, _ in
             excluded.contains("only") ? nil : self.spec("only")
         }
 
@@ -36,7 +36,7 @@ final class TileSelectionPolicyTests: XCTestCase {
 
     func testRotationPrefersGameThatIsEntirelyOffScreen() throws {
         let catalog = ["a", "b", "c"]
-        let source: TileSelectionPolicy.Source = { excluded in
+        let source: TileSelectionPolicy.Source = { excluded, _ in
             catalog.first { !excluded.contains($0) }.map(self.spec)
         }
 
@@ -47,7 +47,7 @@ final class TileSelectionPolicyTests: XCTestCase {
 
     func testRotationKeepsTargetGameWhenExactlyEnoughGamesExist() throws {
         let catalog = ["a", "b"]
-        let source: TileSelectionPolicy.Source = { excluded in
+        let source: TileSelectionPolicy.Source = { excluded, _ in
             catalog.first { !excluded.contains($0) }.map(self.spec)
         }
 
@@ -57,12 +57,31 @@ final class TileSelectionPolicyTests: XCTestCase {
     }
 
     func testRotationFallsBackWhenDuplicatesAreUnavoidable() throws {
-        let source: TileSelectionPolicy.Source = { excluded in
+        let source: TileSelectionPolicy.Source = { excluded, _ in
             excluded.contains("only") ? nil : self.spec("only")
         }
 
         let replacement = try XCTUnwrap(TileSelectionPolicy.replacement(
             source: source, displayed: [spec("only"), spec("only")], replacing: 0))
         XCTAssertEqual(replacement.rom, "only")
+    }
+
+    /// Startup tiles must appear immediately, so the source must be able to
+    /// tell that occasion apart from a rotation — including on every
+    /// exclusion-fallback tier.
+    func testSourceSeesTheOccasionOnEveryFallbackTier() {
+        var occasions: [TileSelectionOccasion] = []
+        let recording: TileSelectionPolicy.Source = { _, occasion in
+            occasions.append(occasion)
+            return nil // exercise every fallback tier
+        }
+
+        _ = TileSelectionPolicy.startup(source: recording, assigned: [])
+        XCTAssertEqual(occasions, [.startup, .startup])
+
+        occasions = []
+        _ = TileSelectionPolicy.replacement(
+            source: recording, displayed: [spec("a")], replacing: 0)
+        XCTAssertEqual(occasions, [.rotation, .rotation, .rotation])
     }
 }
