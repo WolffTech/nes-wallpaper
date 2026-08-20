@@ -243,6 +243,21 @@ final class ContentLibraryTests: XCTestCase {
         }
     }
 
+    func testRandomTileSpecWithoutRandomizedStartBeginsAtPowerOn() throws {
+        let rom = try writeROM(named: "a.nes", seed: 4)
+        _ = try writeFM2(named: "a-run.fm2",
+                         checksumLine: Self.base64Line(rom.checksum), frames: 100)
+
+        let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
+        // A random start is 0 with probability 1/71 per draw; 30 draws all
+        // landing on 0 by chance ≈ 4e-56, so any nonzero frame is a bug.
+        for _ in 0..<30 {
+            let spec = try XCTUnwrap(library.randomTileSpec(
+                includeROMsWithoutMovies: false, randomizedStart: false))
+            XCTAssertEqual(spec.startFrame, 0)
+        }
+    }
+
     func testRandomTileSpecEmptyLibraryIsNil() {
         let library = ContentLibrary(romsDir: romsDir, moviesDir: moviesDir)
         XCTAssertNil(library.randomTileSpec(includeROMsWithoutMovies: true))

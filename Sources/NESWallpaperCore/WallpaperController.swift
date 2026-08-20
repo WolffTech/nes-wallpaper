@@ -23,15 +23,24 @@ public struct TileSpec {
     }
 }
 
+/// Why a tile is being selected. Startup tiles are visible immediately, so
+/// they must publish frames right away; a rotation replacement starts hidden
+/// behind the still-running old tile, so it can afford a long fast-forward
+/// to a mid-movie start.
+public enum TileSelectionOccasion {
+    case startup
+    case rotation
+}
+
 /// Pure selection policy shared by startup and rotation. Keeping the fallback
 /// decisions separate from process management makes the uniqueness behavior
 /// deterministic and unit-testable.
 enum TileSelectionPolicy {
-    typealias Source = (Set<String>) -> TileSpec?
+    typealias Source = (Set<String>, TileSelectionOccasion) -> TileSpec?
 
     static func startup(source: Source, assigned: [TileSpec]) -> TileSpec? {
         let assignedROMs = Set(assigned.map(\.rom))
-        return source(assignedROMs) ?? source([])
+        return source(assignedROMs, .startup) ?? source([], .startup)
     }
 
     static func replacement(source: Source, displayed: [TileSpec],
@@ -41,9 +50,9 @@ enum TileSelectionPolicy {
         let otherDisplayedROMs = Set(displayed.enumerated().compactMap { offset, spec in
             offset == index ? nil : spec.rom
         })
-        return source(allDisplayedROMs)
-            ?? source(otherDisplayedROMs)
-            ?? source([])
+        return source(allDisplayedROMs, .rotation)
+            ?? source(otherDisplayedROMs, .rotation)
+            ?? source([], .rotation)
     }
 }
 
@@ -165,7 +174,7 @@ public final class WallpaperController {
         }
         var index = 0
         try self.init(
-            tileSource: { _ in
+            tileSource: { _, _ in
                 defer { index += 1 }
                 let pair = pairs[index % pairs.count]
                 return TileSpec(rom: pair.rom, movie: pair.movie, startFrame: 0)
@@ -175,12 +184,12 @@ public final class WallpaperController {
     }
 
     /// tileSource is called once per tile at startup and once per rotation,
-    /// with the ROM paths that should not be selected. It returns nil when
-    /// every playable ROM is excluded.
+    /// with the ROM paths that should not be selected and the occasion of
+    /// the call. It returns nil when every playable ROM is excluded.
     /// With rotationInterval set, one tile is replaced every
     /// rotationInterval / tileCount seconds, round-robin, so tiles change on
     /// a stagger rather than all at once.
-    public init(tileSource: @escaping (Set<String>) -> TileSpec?,
+    public init(tileSource: @escaping (Set<String>, TileSelectionOccasion) -> TileSpec?,
                 rotationInterval: TimeInterval?,
                 columns: Int, rows: Int, filter: VideoFilter = .none,
                 lowPowerMode: Bool = false) throws {
