@@ -113,13 +113,9 @@ public final class WallpaperController {
     private var screenLocked = false
     private var emulationPaused = false
     private var occlusionDebounce: DispatchWorkItem?
-    /// Receives the screensaver's UDP heartbeat: while it beats, the saver
-    /// is on screen reading our frame files, so emulation must keep running
-    /// even though the wallpaper itself is covered or the screen is locked.
-    private let heartbeat: HeartbeatListener?
-    /// Re-checks heartbeat staleness while the wallpaper is invisible; beats
-    /// arriving push updates themselves via onBeat.
-    private var heartbeatTimer: Timer?
+    /// Publishes frames to the saver and tracks whether it is consuming them.
+    private let saverBridge: SaverBridge
+    private let ownsSaverBridge: Bool
 
     /// Reduces publication/presentation to 30 fps and renders the wallpaper
     /// at logical rather than Retina resolution. Core emulation remains exact
@@ -180,7 +176,7 @@ public final class WallpaperController {
                 return TileSpec(rom: pair.rom, movie: pair.movie, startFrame: 0)
             },
             rotationInterval: nil, columns: columns, rows: rows,
-            filter: filter, lowPowerMode: lowPowerMode)
+            filter: filter, lowPowerMode: lowPowerMode, saverBridge: nil)
     }
 
     /// tileSource is called once per tile at startup and once per rotation,
@@ -192,7 +188,8 @@ public final class WallpaperController {
     public init(tileSource: @escaping (Set<String>, TileSelectionOccasion) -> TileSpec?,
                 rotationInterval: TimeInterval?,
                 columns: Int, rows: Int, filter: VideoFilter = .none,
-                lowPowerMode: Bool = false) throws {
+                lowPowerMode: Bool = false,
+                saverBridge: SaverBridge? = nil) throws {
         guard columns > 0, rows > 0 else {
             throw WallpaperError("need at least one rom and a positive grid")
         }
@@ -202,18 +199,25 @@ public final class WallpaperController {
         self.tileSource = tileSource
         self.lowPowerMode = lowPowerMode
 
+        let saverConfiguration = SaverConfiguration(
+            columns: columns, rows: rows,
+            tileWidth: filter.outputSize.width,
+            tileHeight: filter.outputSize.height,
+            lowPowerMode: lowPowerMode)
+        if let saverBridge {
+            self.saverBridge = saverBridge
+            self.ownsSaverBridge = false
+            saverBridge.updateConfiguration(saverConfiguration)
+        } else {
+            self.saverBridge = SaverBridge(configuration: saverConfiguration)
+            self.ownsSaverBridge = true
+        }
+
         helper = try Self.findHelper()
         context = try MetalContext()
         try SharedFrames.prepareTilesDirectory()
-        heartbeat = HeartbeatListener()
-        if heartbeat == nil {
+        if self.saverBridge.heartbeatPort == 0 {
             Self.log("failed to bind heartbeat socket; screensaver will show frozen frames")
-        }
-        heartbeat?.onBeat = { [weak self] in
-            // First beat after a quiet spell should resume immediately, not
-            // on the next poll tick.
-            guard let self, self.emulationPaused else { return }
-            self.updatePauseState()
         }
 
         // One grid of helpers total, shared by every display. Spawn them all
@@ -283,6 +287,12 @@ public final class WallpaperController {
             self?.screenLocked = false
             self?.updatePauseState()
         })
+
+        if ownsSaverBridge {
+            self.saverBridge.onActivityChanged = { [weak self] _ in
+                self?.saverActivityChanged()
+            }
+        }
     }
 
     /// Window, renderer, and display link for one display. Links are capped at
@@ -346,10 +356,8 @@ public final class WallpaperController {
             !$0.window.occlusionState.contains(.visible)
         }
         // The wallpaper being invisible only matters while the saver isn't
-        // showing our frames instead. Re-check staleness exactly while
-        // invisibility would otherwise pause us.
-        updateHeartbeatPolling(wanted: screenLocked || allOccluded)
-        let saverWatching = heartbeat?.saverActive ?? false
+        // showing our frames instead.
+        let saverWatching = saverBridge.saverActive
         let shouldPause = userPaused
             || ((screenLocked || allOccluded) && !saverWatching)
         // Links are per-window: never draw to an invisible window, even
@@ -371,20 +379,9 @@ public final class WallpaperController {
         }
     }
 
-    /// While the wallpaper is invisible, re-evaluate periodically so a
-    /// heartbeat going stale pauses emulation again; arriving beats push
-    /// their own updates. Visible again: no polling needed.
-    private func updateHeartbeatPolling(wanted: Bool) {
-        if wanted, heartbeatTimer == nil {
-            let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-                self?.updatePauseState()
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            heartbeatTimer = timer
-        } else if !wanted, heartbeatTimer != nil {
-            heartbeatTimer?.invalidate()
-            heartbeatTimer = nil
-        }
+    /// Re-evaluate automatic pausing after the saver heartbeat changes.
+    public func saverActivityChanged() {
+        updatePauseState()
     }
 
     // MARK: Live-play takeover
@@ -498,18 +495,12 @@ public final class WallpaperController {
 
     /// Republish the manifest whenever the set of frame files changes.
     private func writeManifest() {
-        let manifest = SharedFrames.Manifest(
-            pid: getpid(), columns: columns, rows: rows,
+        saverBridge.updateConfiguration(SaverConfiguration(
+            columns: columns, rows: rows,
             tileWidth: filter.outputSize.width,
             tileHeight: filter.outputSize.height,
-            heartbeatPort: Int(heartbeat?.port ?? 0),
-            lowPowerMode: lowPowerMode,
-            tiles: tiles.map(\.shmName))
-        do {
-            try SharedFrames.write(manifest)
-        } catch {
-            Self.log("failed to write saver manifest: \(error)")
-        }
+            lowPowerMode: lowPowerMode))
+        saverBridge.publish(tiles: tiles.map(\.shmName))
     }
 
     public func shutdown() {
@@ -532,11 +523,8 @@ public final class WallpaperController {
             DistributedNotificationCenter.default().removeObserver(pauseObserver)
         }
         pauseObservers.removeAll()
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
-        // A manifest with no live app behind it would leave the saver
-        // showing black tiles; better for it to say "wallpaper not running".
-        try? FileManager.default.removeItem(at: SharedFrames.manifestURL)
+        saverBridge.clearTiles()
+        if ownsSaverBridge { saverBridge.shutdown() }
         for tile in tiles { tile.terminate() }
         tiles.removeAll()
         tileSpecs.removeAll()

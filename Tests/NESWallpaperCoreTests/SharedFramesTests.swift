@@ -92,4 +92,74 @@ final class SharedFramesTests: XCTestCase {
         wait(for: [decayed], timeout: 2)
         XCTAssertFalse(listener.saverActive)
     }
+
+    func testSaverBridgePublishesFramesAndActivityTransitions() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bridge.\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let listener = try XCTUnwrap(HeartbeatListener(maxAge: 0.2))
+        let bridge = SaverBridge(
+            configuration: SaverConfiguration(
+                columns: 3, rows: 2, tileWidth: 256, tileHeight: 240,
+                lowPowerMode: true),
+            heartbeat: listener, manifestURL: url, activityPollInterval: 0.05)
+        defer { bridge.shutdown() }
+
+        var manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
+        XCTAssertEqual(manifest.heartbeatPort, Int(listener.port))
+        XCTAssertEqual(manifest.tiles, [])
+
+        bridge.publish(tiles: ["/a.frame", "/b.frame"])
+        manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
+        XCTAssertEqual(manifest.tiles, ["/a.frame", "/b.frame"])
+
+        let active = expectation(description: "saver became active")
+        let inactive = expectation(description: "saver became inactive")
+        bridge.onActivityChanged = { isActive in
+            (isActive ? active : inactive).fulfill()
+        }
+        sendBeat(to: listener.port)
+        wait(for: [active], timeout: 2)
+        XCTAssertTrue(bridge.saverActive)
+        wait(for: [inactive], timeout: 2)
+        XCTAssertFalse(bridge.saverActive)
+    }
+
+    func testSaverBridgeLeavesNewerManifestOnShutdown() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bridge.\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bridge = SaverBridge(
+            configuration: SaverConfiguration(
+                columns: 1, rows: 1, tileWidth: 256, tileHeight: 240,
+                lowPowerMode: false),
+            heartbeat: nil, manifestURL: url, activityPollInterval: 1)
+        let other = SharedFrames.Manifest(
+            pid: getpid() + 1, columns: 1, rows: 1,
+            tileWidth: 256, tileHeight: 240, heartbeatPort: 0,
+            tiles: [])
+        try SharedFrames.write(other, to: url)
+
+        bridge.shutdown()
+
+        XCTAssertEqual(SharedFrames.readManifest(from: url), other)
+    }
+
+    private func sendBeat(to port: UInt16) {
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        addr.sin_port = port.bigEndian
+        var payload: UInt8 = 1
+        let sent = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                sendto(fd, &payload, 1, 0, sa,
+                       socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(sent, 1)
+    }
 }
