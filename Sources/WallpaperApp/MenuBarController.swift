@@ -95,6 +95,15 @@ extension Int {
     }
 }
 
+/// Playback exists while either presentation needs it. Desktop demand also
+/// controls whether the running grid owns wallpaper windows.
+struct PlaybackDemand: Equatable {
+    var desktop = true
+    var saver = false
+
+    var needsPlayback: Bool { desktop || saver }
+}
+
 /// Owns the status item and the wallpaper lifecycle in menu-bar mode.
 final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
@@ -103,6 +112,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var browserWindow: TASBrowserWindowController?
     private var takeoverHotKey: GlobalHotKey?
     private(set) var updaterController: UpdaterController?
+    private var saverBridge: SaverBridge?
+    private var demand = PlaybackDemand()
 
     /// User's pause intent; sticks across stop/start and screen lock (the
     /// controller combines it with its own automatic pause conditions).
@@ -178,11 +189,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         item.menu = menu
         statusItem = item
+        let settings = WallpaperSettings.load()
+        let bridge = SaverBridge(configuration: Self.saverConfiguration(settings))
+        bridge.onActivityChanged = { [weak self] active in
+            self?.demand.saver = active
+            self?.reconcilePlayback(interactive: false)
+        }
+        saverBridge = bridge
         refreshMenuTitles()
 
-        // Start automatically when the configured folders already yield
-        // matches; otherwise wait for the user to open Settings.
-        startWallpaper(interactive: false)
+        // Desktop demand starts enabled for backward compatibility.
+        reconcilePlayback(interactive: false)
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -190,7 +207,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     private func refreshMenuTitles() {
-        startStopItem.title = controller == nil ? "Start Wallpaper" : "Stop Wallpaper"
+        startStopItem.title = demand.desktop ? "Stop Wallpaper" : "Start Wallpaper"
         pauseItem.title = userWantsPause ? "Resume" : "Pause"
         pauseItem.isEnabled = controller != nil
         lowPowerItem.state = WallpaperSettings.load().lowPowerMode ? .on : .off
@@ -217,7 +234,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         takeoverItem.title = "Take Over Game"
         takeoverItem.action = nil
-        guard let controller, !userWantsPause else {
+        guard demand.desktop, let controller, !userWantsPause else {
             takeoverItem.submenu = nil
             takeoverItem.isEnabled = false
             return
@@ -265,11 +282,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleWallpaper() {
-        if controller != nil {
-            stopWallpaper()
-        } else {
-            startWallpaper(interactive: true)
-        }
+        demand.desktop.toggle()
+        reconcilePlayback(interactive: demand.desktop)
     }
 
     @objc private func togglePause() {
@@ -283,6 +297,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         settings.lowPowerMode.toggle()
         settings.save()
         controller?.lowPowerMode = settings.lowPowerMode
+        saverBridge?.updateConfiguration(Self.saverConfiguration(settings))
         refreshMenuTitles()
     }
 
@@ -301,12 +316,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     /// Called by the settings window's Apply button after it has saved the
-    /// new values: restart the wallpaper only if it is currently running.
+    /// new values. A running grid restarts so every helper uses them.
     func settingsApplied() {
         let settings = WallpaperSettings.load()
         NSApp.setActivationPolicy(settings.showDockIcon ? .regular : .accessory)
-        guard controller != nil else { return }
-        startWallpaper(interactive: true)
+        stopPlayback()
+        saverBridge?.updateConfiguration(Self.saverConfiguration(settings))
+        reconcilePlayback(interactive: demand.desktop)
     }
 
     /// Called by the Controls tab after each saved change: a keymap swap
@@ -376,11 +392,40 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func startWallpaper(interactive: Bool) {
-        stopWallpaper()
+    private static func saverConfiguration(_ settings: WallpaperSettings)
+        -> SaverConfiguration
+    {
+        SaverConfiguration(
+            columns: settings.columns, rows: settings.rows,
+            tileWidth: settings.videoFilter.outputSize.width,
+            tileHeight: settings.videoFilter.outputSize.height,
+            lowPowerMode: settings.lowPowerMode)
+    }
+
+    private func reconcilePlayback(interactive: Bool) {
+        demand.saver = saverBridge?.saverActive ?? false
+        guard demand.needsPlayback else {
+            stopPlayback()
+            return
+        }
+        if let controller {
+            do {
+                try controller.setDesktopPresentationEnabled(demand.desktop)
+                controller.saverActivityChanged()
+            } catch {
+                log("\(error)")
+                if interactive { showStartError(error) }
+            }
+            refreshMenuTitles()
+            return
+        }
+        startPlayback(interactive: interactive)
+    }
+
+    private func startPlayback(interactive: Bool) {
         let settings = WallpaperSettings.load()
         guard let tileSource = Self.makeTileSource(settings: settings) else {
-            log("no configured rom/movie matches; wallpaper not started")
+            log("no configured rom/movie matches; playback not started")
             if interactive {
                 let alert = NSAlert()
                 alert.messageText = "Nothing to Play"
@@ -394,18 +439,21 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 alert.alertStyle = .warning
                 NSApp.activate(ignoringOtherApps: true)
                 alert.runModal()
+                openSettings()
             }
-            openSettings()
             refreshMenuTitles()
             return
         }
+        guard let saverBridge else { return }
         do {
             let controller = try WallpaperController(
                 tileSource: tileSource,
                 rotationInterval: settings.rotationInterval,
                 columns: settings.columns, rows: settings.rows,
                 filter: settings.videoFilter,
-                lowPowerMode: settings.lowPowerMode)
+                lowPowerMode: settings.lowPowerMode,
+                desktopPresentationEnabled: demand.desktop,
+                saverBridge: saverBridge)
             controller.userPaused = userWantsPause
             controller.takeoverKeymap =
                 TakeoverKeymap(buttonAssignments: settings.takeoverControls)
@@ -414,26 +462,30 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             self.controller = controller
         } catch {
             log("\(error)")
-            if interactive {
-                let alert = NSAlert()
-                alert.messageText = "Could Not Start Wallpaper"
-                alert.informativeText = "\(error)"
-                alert.alertStyle = .critical
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
-            }
+            if interactive { showStartError(error) }
         }
         refreshMenuTitles()
     }
 
-    private func stopWallpaper() {
+    private func showStartError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could Not Start Wallpaper"
+        alert.informativeText = "\(error)"
+        alert.alertStyle = .critical
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    private func stopPlayback() {
         controller?.shutdown()
         controller = nil
         refreshMenuTitles()
     }
 
     func shutdown() {
-        stopWallpaper()
+        stopPlayback()
+        saverBridge?.shutdown()
+        saverBridge = nil
     }
 
     private func log(_ msg: String) {

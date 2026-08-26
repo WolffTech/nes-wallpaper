@@ -74,11 +74,9 @@ private final class DisplayLinkDriver: NSObject {
     }
 }
 
-/// Renders a columns x rows grid of NES tiles on a borderless window at
-/// desktop level (behind icons) on every attached display. Each tile is a
-/// nes-helper child process read via shared memory; all displays mirror the
-/// same grid, so extra displays cost texture uploads and draws, not extra
-/// emulator processes. Windows follow displays as they attach and detach.
+/// Runs a columns x rows grid of NES helpers for the desktop wallpaper, the
+/// screen saver, or both. Desktop windows can come and go without restarting
+/// the helpers, so the saver can keep consuming the same shared frames.
 public final class WallpaperController {
     /// Everything tied to one display's wallpaper window, so displays can be
     /// added and removed as a unit on hot-plug.
@@ -102,7 +100,8 @@ public final class WallpaperController {
     /// Selection metadata kept parallel with `tiles`, since TileProcess only
     /// owns the helper and shared-memory transport.
     private var tileSpecs: [TileSpec] = []
-    private let context: MetalContext
+    private var context: MetalContext?
+    public private(set) var desktopPresentationEnabled: Bool
     private var rotationTimer: Timer?
     private var rotationIndex = 0 // next tile to rotate, round-robin
     private var rotationInProgress = false
@@ -176,7 +175,8 @@ public final class WallpaperController {
                 return TileSpec(rom: pair.rom, movie: pair.movie, startFrame: 0)
             },
             rotationInterval: nil, columns: columns, rows: rows,
-            filter: filter, lowPowerMode: lowPowerMode, saverBridge: nil)
+            filter: filter, lowPowerMode: lowPowerMode,
+            desktopPresentationEnabled: true, saverBridge: nil)
     }
 
     /// tileSource is called once per tile at startup and once per rotation,
@@ -189,6 +189,7 @@ public final class WallpaperController {
                 rotationInterval: TimeInterval?,
                 columns: Int, rows: Int, filter: VideoFilter = .none,
                 lowPowerMode: Bool = false,
+                desktopPresentationEnabled: Bool = true,
                 saverBridge: SaverBridge? = nil) throws {
         guard columns > 0, rows > 0 else {
             throw WallpaperError("need at least one rom and a positive grid")
@@ -198,6 +199,7 @@ public final class WallpaperController {
         self.filter = filter
         self.tileSource = tileSource
         self.lowPowerMode = lowPowerMode
+        self.desktopPresentationEnabled = desktopPresentationEnabled
 
         let saverConfiguration = SaverConfiguration(
             columns: columns, rows: rows,
@@ -214,7 +216,6 @@ public final class WallpaperController {
         }
 
         helper = try Self.findHelper()
-        context = try MetalContext()
         try SharedFrames.prepareTilesDirectory()
         if self.saverBridge.heartbeatPort == 0 {
             Self.log("failed to bind heartbeat socket; screensaver will show frozen frames")
@@ -249,8 +250,8 @@ public final class WallpaperController {
 
         writeManifest()
 
-        for screen in NSScreen.screens {
-            try addSlot(for: screen)
+        if desktopPresentationEnabled {
+            try enableDesktopPresentation()
         }
 
         if let rotationInterval, rotationInterval > 0, !tiles.isEmpty {
@@ -299,6 +300,14 @@ public final class WallpaperController {
     /// the active 60/30 fps publication rate, and unchanged frames are gated
     /// before drawable acquisition.
     private func addSlot(for screen: NSScreen) throws {
+        let context: MetalContext
+        if let existing = self.context {
+            context = existing
+        } else {
+            let created = try MetalContext()
+            self.context = created
+            context = created
+        }
         let window = Self.makeDesktopWindow(frame: screen.frame)
         let content = WallpaperMetalView(
             frame: NSRect(origin: .zero, size: screen.frame.size),
@@ -341,6 +350,38 @@ public final class WallpaperController {
         slot.displayLink.invalidate()
         NotificationCenter.default.removeObserver(slot.occlusionObserver)
         slot.window.orderOut(nil)
+    }
+
+    /// Add or remove desktop windows without disturbing helpers consumed by
+    /// the screen saver. Enabling can fail if Metal setup fails.
+    public func setDesktopPresentationEnabled(_ enabled: Bool) throws {
+        guard enabled != desktopPresentationEnabled else { return }
+        if enabled {
+            desktopPresentationEnabled = true
+            do {
+                try enableDesktopPresentation()
+            } catch {
+                for slot in slots { removeSlot(slot) }
+                slots.removeAll()
+                desktopPresentationEnabled = false
+                updatePauseState()
+                throw error
+            }
+        } else {
+            endTakeover()
+            cancelTileSelection()
+            for slot in slots { removeSlot(slot) }
+            slots.removeAll()
+            desktopPresentationEnabled = false
+            updatePauseState()
+        }
+    }
+
+    private func enableDesktopPresentation() throws {
+        for screen in NSScreen.screens {
+            try addSlot(for: screen)
+        }
+        updatePauseState()
     }
 
     private func configureFrameRate(for link: CADisplayLink) {
@@ -648,6 +689,7 @@ public final class WallpaperController {
         // Selection mode holds per-window saved state; displays changing
         // under it would restore the wrong windows. Start over instead.
         cancelTileSelection()
+        guard desktopPresentationEnabled else { return }
         var departed = slots
         slots.removeAll()
         for screen in NSScreen.screens {
