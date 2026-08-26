@@ -18,6 +18,7 @@ struct WallpaperSettings {
     static let takeoverControlsKey = "TakeoverControls"
     static let takeoverShortcutKey = "TakeoverShortcut"
     static let showDockIconKey = "ShowDockIcon"
+    static let showDesktopWallpaperKey = "ShowDesktopWallpaper"
     static let fullscreenTakeoverKey = "FullscreenTakeover"
 
     var romsDir: String?
@@ -29,6 +30,7 @@ struct WallpaperSettings {
     var videoFilter: VideoFilter
     var lowPowerMode: Bool
     var showDockIcon: Bool
+    var showDesktopWallpaper: Bool
     /// Takeover key overrides, button name → keyCode; empty = all defaults
     /// (see TakeoverKeymap.init(buttonAssignments:)).
     var takeoverControls: [String: Int]
@@ -66,6 +68,8 @@ struct WallpaperSettings {
                 rawValue: defaults.string(forKey: videoFilterKey) ?? "") ?? .none,
             lowPowerMode: defaults.bool(forKey: lowPowerModeKey),
             showDockIcon: defaults.bool(forKey: showDockIconKey),
+            showDesktopWallpaper: defaults.object(forKey: showDesktopWallpaperKey)
+                as? Bool ?? true,
             takeoverControls: defaults.dictionary(forKey: takeoverControlsKey)?
                 .compactMapValues { $0 as? Int } ?? [:],
             takeoverShortcut: shortcut,
@@ -82,6 +86,7 @@ struct WallpaperSettings {
         defaults.set(videoFilter.rawValue, forKey: Self.videoFilterKey)
         defaults.set(lowPowerMode, forKey: Self.lowPowerModeKey)
         defaults.set(showDockIcon, forKey: Self.showDockIconKey)
+        defaults.set(showDesktopWallpaper, forKey: Self.showDesktopWallpaperKey)
         defaults.set(takeoverControls, forKey: Self.takeoverControlsKey)
         defaults.set(takeoverShortcut?.storedValue ?? [:],
                      forKey: Self.takeoverShortcutKey)
@@ -190,6 +195,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         item.menu = menu
         statusItem = item
         let settings = WallpaperSettings.load()
+        demand.desktop = settings.showDesktopWallpaper
         let bridge = SaverBridge(configuration: Self.saverConfiguration(settings))
         bridge.onActivityChanged = { [weak self] active in
             self?.demand.saver = active
@@ -320,6 +326,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     func settingsApplied() {
         let settings = WallpaperSettings.load()
         NSApp.setActivationPolicy(settings.showDockIcon ? .regular : .accessory)
+        demand.desktop = settings.showDesktopWallpaper
         stopPlayback()
         saverBridge?.updateConfiguration(Self.saverConfiguration(settings))
         reconcilePlayback(interactive: demand.desktop)
@@ -426,6 +433,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let settings = WallpaperSettings.load()
         guard let tileSource = Self.makeTileSource(settings: settings) else {
             log("no configured rom/movie matches; playback not started")
+            saverBridge?.markPlaybackUnavailable()
             if interactive {
                 let alert = NSAlert()
                 alert.messageText = "Nothing to Play"
@@ -462,6 +470,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             self.controller = controller
         } catch {
             log("\(error)")
+            saverBridge.markPlaybackUnavailable()
             if interactive { showStartError(error) }
         }
         refreshMenuTitles()

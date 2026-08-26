@@ -31,6 +31,7 @@ public final class SaverBridge {
 
     private var configuration: SaverConfiguration
     private var tiles: [String] = []
+    private var playbackState = SharedFrames.PlaybackState.idle
     private let heartbeat: HeartbeatListener?
     private let manifestURL: URL
     private let activityPollInterval: TimeInterval
@@ -61,21 +62,37 @@ public final class SaverBridge {
 
     public func updateConfiguration(_ configuration: SaverConfiguration) {
         self.configuration = configuration
+        if tiles.isEmpty {
+            playbackState = saverActive ? .starting : .idle
+        }
         writeManifest()
     }
 
     public func publish(tiles: [String]) {
         self.tiles = tiles
+        playbackState = tiles.isEmpty
+            ? (saverActive ? .starting : .idle)
+            : .active
         writeManifest()
     }
 
     public func clearTiles() {
-        guard !tiles.isEmpty else { return }
         tiles = []
+        playbackState = saverActive ? .starting : .idle
+        writeManifest()
+    }
+
+    public func markPlaybackUnavailable() {
+        tiles = []
+        playbackState = .unavailable
         writeManifest()
     }
 
     private func receivedBeat() {
+        if tiles.isEmpty, playbackState != .unavailable {
+            playbackState = .starting
+            writeManifest()
+        }
         setSaverActive(true)
         guard activityTimer == nil else { return }
         let timer = Timer(timeInterval: activityPollInterval, repeats: true) {
@@ -111,6 +128,7 @@ public final class SaverBridge {
             tileHeight: configuration.tileHeight,
             heartbeatPort: Int(heartbeatPort),
             lowPowerMode: configuration.lowPowerMode,
+            playbackState: playbackState,
             tiles: tiles)
         do {
             try SharedFrames.write(manifest, to: manifestURL)

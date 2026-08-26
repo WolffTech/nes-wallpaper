@@ -27,6 +27,7 @@ final class SharedFramesTests: XCTestCase {
         let manifest = SharedFrames.Manifest(
             pid: 4242, columns: 3, rows: 2, tileWidth: 256, tileHeight: 240,
             heartbeatPort: 50000, lowPowerMode: true,
+            playbackState: .active,
             tiles: ["/a.frame", "/b.frame"])
         try SharedFrames.write(manifest, to: url)
         XCTAssertEqual(SharedFrames.readManifest(from: url), manifest)
@@ -43,6 +44,7 @@ final class SharedFramesTests: XCTestCase {
         try Data(json.utf8).write(to: url)
         let manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
         XCTAssertNil(manifest.lowPowerMode)
+        XCTAssertNil(manifest.playbackState)
     }
 
     func testManifestReadRejectsMissingOrGarbage() throws {
@@ -107,11 +109,8 @@ final class SharedFramesTests: XCTestCase {
 
         var manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
         XCTAssertEqual(manifest.heartbeatPort, Int(listener.port))
+        XCTAssertEqual(manifest.playbackState, .idle)
         XCTAssertEqual(manifest.tiles, [])
-
-        bridge.publish(tiles: ["/a.frame", "/b.frame"])
-        manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
-        XCTAssertEqual(manifest.tiles, ["/a.frame", "/b.frame"])
 
         let active = expectation(description: "saver became active")
         let inactive = expectation(description: "saver became inactive")
@@ -121,8 +120,21 @@ final class SharedFramesTests: XCTestCase {
         sendBeat(to: listener.port)
         wait(for: [active], timeout: 2)
         XCTAssertTrue(bridge.saverActive)
+        manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
+        XCTAssertEqual(manifest.playbackState, .starting)
+
+        bridge.publish(tiles: ["/a.frame", "/b.frame"])
+        manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
+        XCTAssertEqual(manifest.playbackState, .active)
+        XCTAssertEqual(manifest.tiles, ["/a.frame", "/b.frame"])
+
         wait(for: [inactive], timeout: 2)
         XCTAssertFalse(bridge.saverActive)
+
+        bridge.markPlaybackUnavailable()
+        manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
+        XCTAssertEqual(manifest.playbackState, .unavailable)
+        XCTAssertEqual(manifest.tiles, [])
     }
 
     func testSaverBridgeLeavesNewerManifestOnShutdown() throws {
