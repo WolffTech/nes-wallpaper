@@ -59,6 +59,23 @@ final class WallpaperSettingsTests: XCTestCase {
         }
     }
 
+    func testDesktopWallpaperIsShownByDefault() {
+        withDefaults { defaults in
+            XCTAssertTrue(WallpaperSettings.load(defaults: defaults).showDesktopWallpaper)
+        }
+    }
+
+    func testDesktopWallpaperCanBeDisabled() {
+        withDefaults { defaults in
+            var settings = WallpaperSettings.load(defaults: defaults)
+            settings.showDesktopWallpaper = false
+            settings.save(defaults: defaults)
+
+            XCTAssertFalse(
+                WallpaperSettings.load(defaults: defaults).showDesktopWallpaper)
+        }
+    }
+
     func testFullscreenTakeoverIsOffByDefault() {
         withDefaults { defaults in
             XCTAssertFalse(WallpaperSettings.load(defaults: defaults).fullscreenTakeover)

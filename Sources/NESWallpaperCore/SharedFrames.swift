@@ -46,6 +46,13 @@ public enum SharedFrames {
 
     // MARK: - Manifest (app writes, saver reads)
 
+    public enum PlaybackState: String, Codable, Equatable {
+        case idle
+        case starting
+        case active
+        case unavailable
+    }
+
     /// What the saver needs to reproduce the grid: the frame file for every
     /// tile slot, in grid order (row-major, matching TileGridRenderer). A
     /// dead tile's path stays listed; its file is gone, and readers render
@@ -66,11 +73,15 @@ public enum SharedFrames {
         /// Optional for backward compatibility with manifests written before
         /// Low Power Mode existed; a missing value means normal rendering.
         public let lowPowerMode: Bool?
+        /// Optional so previously installed saver bundles and manifests stay
+        /// compatible while the app reports cold-start and error states.
+        public let playbackState: PlaybackState?
         public let tiles: [String]
 
         public init(pid: Int32, columns: Int, rows: Int,
                     tileWidth: Int, tileHeight: Int,
                     heartbeatPort: Int, lowPowerMode: Bool = false,
+                    playbackState: PlaybackState? = nil,
                     tiles: [String]) {
             self.version = 1
             self.pid = pid
@@ -80,6 +91,7 @@ public enum SharedFrames {
             self.tileHeight = tileHeight
             self.heartbeatPort = heartbeatPort
             self.lowPowerMode = lowPowerMode
+            self.playbackState = playbackState
             self.tiles = tiles
         }
     }

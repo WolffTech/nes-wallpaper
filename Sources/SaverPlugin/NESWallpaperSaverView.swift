@@ -127,8 +127,17 @@ public final class NESWallpaperSaverView: ScreenSaverView {
             statusLabel.isHidden = false
             return
         }
-        statusLabel.isHidden = true
         beatPort = UInt16(clamping: manifest.heartbeatPort)
+
+        if manifest.tiles.isEmpty {
+            tearDownRenderer()
+            statusLabel.stringValue = manifest.playbackState == .unavailable
+                ? "NES Wallpaper could not start"
+                : "Starting NES Wallpaper\u{2026}"
+            statusLabel.isHidden = false
+            return
+        }
+        statusLabel.isHidden = true
 
         let shape = (manifest.columns, manifest.rows,
                      manifest.tileWidth, manifest.tileHeight)

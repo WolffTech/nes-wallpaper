@@ -47,6 +47,9 @@ Controls**.
 
 To use the screensaver, open **Settings → General**, install it, then select
 **NES Wallpaper** in macOS **System Settings → Wallpaper → Screen Saver**.
+Turn on **Launch at Login** so the menu-bar app can respond when the saver
+starts. To use NES Wallpaper only as a screen saver, turn off **Show Wallpaper
+on Desktop** in **Settings → General**.
 
 ### Updates
 

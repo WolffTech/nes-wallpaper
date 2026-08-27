@@ -18,6 +18,7 @@ final class SettingsModel: ObservableObject {
     @Published var includeROMsWithoutMovies = true
     @Published var videoFilter = VideoFilter.none
     @Published var showDockIcon = false
+    @Published var showDesktopWallpaper = true
 
     var onApply: (() -> Void)?
 
@@ -31,6 +32,7 @@ final class SettingsModel: ObservableObject {
         includeROMsWithoutMovies = settings.includeROMsWithoutMovies
         videoFilter = settings.videoFilter
         showDockIcon = settings.showDockIcon
+        showDesktopWallpaper = settings.showDesktopWallpaper
     }
 
     func apply() {
@@ -43,6 +45,7 @@ final class SettingsModel: ObservableObject {
         settings.includeROMsWithoutMovies = includeROMsWithoutMovies
         settings.videoFilter = videoFilter
         settings.showDockIcon = showDockIcon
+        settings.showDesktopWallpaper = showDesktopWallpaper
         settings.save()
         onApply?()
     }
@@ -307,6 +310,12 @@ struct SettingsView: View {
                 note(Text("When off, NES Wallpaper appears only in the menu bar."))
             }
             Section {
+                Toggle("Show Wallpaper on Desktop",
+                       isOn: $model.showDesktopWallpaper)
+            } footer: {
+                note(Text("When off, the emulator grid runs only while the NES Wallpaper screen saver is active."))
+            }
+            Section {
                 Toggle("Launch at Login", isOn: Binding(
                     get: { loginItem.enabled },
                     set: { loginItem.set($0) }))
@@ -336,7 +345,7 @@ struct SettingsView: View {
                 } else if let error = saverInstall.lastError {
                     note(Text(error).foregroundStyle(.red))
                 } else {
-                    note(Text("Plays the wallpaper as your screen saver, including on the lock screen. After installing, pick \u{201C}NES Wallpaper\u{201D} in System Settings under Wallpaper \u{2192} Screen Saver. Frames only arrive while the app is running, so turn on Launch at Login."))
+                    note(Text("Plays the grid as your screen saver, including on the lock screen. After installing, pick \u{201C}NES Wallpaper\u{201D} in System Settings under Wallpaper \u{2192} Screen Saver. Turn on Launch at Login so the menu-bar app can start the grid when the saver activates."))
                 }
             }
             Section {
