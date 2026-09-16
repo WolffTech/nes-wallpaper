@@ -103,8 +103,16 @@ extension Int {
 /// Playback exists while either presentation needs it. Desktop demand also
 /// controls whether the running grid owns wallpaper windows.
 struct PlaybackDemand: Equatable {
-    var desktop = true
+    var desktop = true {
+        didSet {
+            // Stopping wallpaper ends its pause intent, even if the saver
+            // keeps the current playback controller alive.
+            if !desktop { userPaused = false }
+        }
+    }
     var saver = false
+    /// Survives screen lock and playback rebuilds until wallpaper is stopped.
+    var userPaused = false
 
     var needsPlayback: Bool { desktop || saver }
 }
@@ -119,10 +127,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private(set) var updaterController: UpdaterController?
     private var saverBridge: SaverBridge?
     private var demand = PlaybackDemand()
-
-    /// User's pause intent; sticks across stop/start and screen lock (the
-    /// controller combines it with its own automatic pause conditions).
-    private var userWantsPause = false
 
     private let startStopItem = NSMenuItem()
     private let pauseItem = NSMenuItem()
@@ -214,7 +218,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func refreshMenuTitles() {
         startStopItem.title = demand.desktop ? "Stop Wallpaper" : "Start Wallpaper"
-        pauseItem.title = userWantsPause ? "Resume" : "Pause"
+        pauseItem.title = demand.userPaused ? "Resume" : "Pause"
         pauseItem.isEnabled = controller != nil
         lowPowerItem.state = WallpaperSettings.load().lowPowerMode ? .on : .off
         refreshTakeoverItem()
@@ -240,7 +244,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         takeoverItem.title = "Take Over Game"
         takeoverItem.action = nil
-        guard demand.desktop, let controller, !userWantsPause else {
+        guard demand.desktop, let controller, !demand.userPaused else {
             takeoverItem.submenu = nil
             takeoverItem.isEnabled = false
             return
@@ -293,8 +297,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func togglePause() {
-        userWantsPause.toggle()
-        controller?.userPaused = userWantsPause
+        demand.userPaused.toggle()
+        controller?.userPaused = demand.userPaused
         refreshMenuTitles()
     }
 
@@ -416,6 +420,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             return
         }
         if let controller {
+            controller.userPaused = demand.userPaused
             do {
                 try controller.setDesktopPresentationEnabled(demand.desktop)
                 controller.saverActivityChanged()
@@ -462,7 +467,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 lowPowerMode: settings.lowPowerMode,
                 desktopPresentationEnabled: demand.desktop,
                 saverBridge: saverBridge)
-            controller.userPaused = userWantsPause
+            controller.userPaused = demand.userPaused
             controller.takeoverKeymap =
                 TakeoverKeymap(buttonAssignments: settings.takeoverControls)
             controller.fullscreenTakeover = settings.fullscreenTakeover
