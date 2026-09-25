@@ -33,10 +33,24 @@ UberNES “Nintendo Saver.”
 
 NES Wallpaper requires macOS 14 or later.
 
-1. Download the signed `.dmg` from [GitHub Releases](https://github.com/WolffTech/nes-wallpaper/releases) when one is available, or [build from source](#build-from-source).
+### Homebrew
+
+On Apple silicon Macs, install from the
+[Wolff.Tech Homebrew tap](https://github.com/WolffTech/homebrew-tap):
+
+```sh
+brew install --cask wolfftech/tap/nes-wallpaper
+```
+
+### Manual
+
+1. Download the signed `.dmg` from [GitHub Releases](https://github.com/WolffTech/nes-wallpaper/releases), or [build from source](#build-from-source).
 2. Open the disk image and drag **NES Wallpaper.app** to **Applications**.
-3. Open NES Wallpaper from **Applications**.
-4. In **Settings → Library**, choose folders containing your `.nes` ROMs and `.fm2` movies.
+
+### Getting started
+
+1. Open NES Wallpaper from **Applications**.
+2. In **Settings → Library**, choose folders containing your `.nes` ROMs and `.fm2` movies.
 
 The app lives in the menu bar. You can download FM2 movies from the built-in
 TASVideos browser; NES Wallpaper matches them to compatible ROMs by checksum.
@@ -58,7 +72,7 @@ The app checks GitHub Releases for updates via
 menu bar, or turn on automatic checks in **Settings → General**. In-app
 updating only works after the app has been moved to **Applications** (macOS
 runs apps launched from the disk image or `~/Downloads` translocated, which
-Sparkle cannot update in place).
+Sparkle cannot update in place). Homebrew installs update the same way.
 
 ## Build from source
 
