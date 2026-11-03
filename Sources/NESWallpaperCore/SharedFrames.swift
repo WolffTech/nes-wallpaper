@@ -73,6 +73,9 @@ public enum SharedFrames {
         /// Optional for backward compatibility with manifests written before
         /// Low Power Mode existed; a missing value means normal rendering.
         public let lowPowerMode: Bool?
+        /// Optional like lowPowerMode; a missing value means every display
+        /// mirrors the same order.
+        public let shuffleDisplays: Bool?
         /// Optional so previously installed saver bundles and manifests stay
         /// compatible while the app reports cold-start and error states.
         public let playbackState: PlaybackState?
@@ -81,6 +84,7 @@ public enum SharedFrames {
         public init(pid: Int32, columns: Int, rows: Int,
                     tileWidth: Int, tileHeight: Int,
                     heartbeatPort: Int, lowPowerMode: Bool = false,
+                    shuffleDisplays: Bool = false,
                     playbackState: PlaybackState? = nil,
                     tiles: [String]) {
             self.version = 1
@@ -91,6 +95,7 @@ public enum SharedFrames {
             self.tileHeight = tileHeight
             self.heartbeatPort = heartbeatPort
             self.lowPowerMode = lowPowerMode
+            self.shuffleDisplays = shuffleDisplays
             self.playbackState = playbackState
             self.tiles = tiles
         }

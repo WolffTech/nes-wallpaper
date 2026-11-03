@@ -26,6 +26,9 @@ public final class NESWallpaperSaverView: ScreenSaverView {
     private var tiles: [any TileFrameSource] = []
     private var tilePaths: [String] = []
     private var gridShape: (columns: Int, rows: Int, width: Int, height: Int)?
+    /// Whether the renderer currently has a shuffled layout. Each display
+    /// gets its own saver instance, so each shuffles independently.
+    private var layoutShuffled = false
     /// Heartbeat + manifest polling; runs only between start/stopAnimation.
     private var pollTimer: Timer?
     private let statusLabel = NSTextField(labelWithString: "")
@@ -147,6 +150,19 @@ public final class NESWallpaperSaverView: ScreenSaverView {
         guard let renderer else { return }
         metalView?.lowPowerMode = manifest.lowPowerMode ?? false
 
+        // Like the wallpaper, the main display keeps the grid order; other
+        // displays shuffle. Instances can't see each other's layouts, so a
+        // shuffle only avoids the main display's order.
+        let shuffle = (manifest.shuffleDisplays ?? false) && !isPreview
+            && !isOnPrimaryDisplay
+        if shuffle != layoutShuffled {
+            let identity = TileLayout.identity(count: manifest.columns * manifest.rows)
+            renderer.layout = shuffle
+                ? .shuffled(count: identity.count, avoiding: [identity])
+                : identity
+            layoutShuffled = shuffle
+        }
+
         // Remap tiles whose path changed (rotation), and keep retrying
         // slots that never mapped (helper still starting, or tile dead).
         for (index, path) in manifest.tiles.enumerated()
@@ -193,8 +209,18 @@ public final class NESWallpaperSaverView: ScreenSaverView {
         metalView = nil
         renderer = nil
         gridShape = nil
+        layoutShuffled = false
         tiles = []
         tilePaths = []
+    }
+
+    /// NSScreen.screens.first is the display with the menu bar.
+    private var isOnPrimaryDisplay: Bool {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        guard let screen = window?.screen,
+              let primary = NSScreen.screens.first else { return true }
+        return (screen.deviceDescription[key] as? NSNumber)
+            == (primary.deviceDescription[key] as? NSNumber)
     }
 
     // MARK: - Fallback

@@ -27,7 +27,7 @@ final class SharedFramesTests: XCTestCase {
         let manifest = SharedFrames.Manifest(
             pid: 4242, columns: 3, rows: 2, tileWidth: 256, tileHeight: 240,
             heartbeatPort: 50000, lowPowerMode: true,
-            playbackState: .active,
+            shuffleDisplays: true, playbackState: .active,
             tiles: ["/a.frame", "/b.frame"])
         try SharedFrames.write(manifest, to: url)
         XCTAssertEqual(SharedFrames.readManifest(from: url), manifest)
@@ -44,6 +44,7 @@ final class SharedFramesTests: XCTestCase {
         try Data(json.utf8).write(to: url)
         let manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
         XCTAssertNil(manifest.lowPowerMode)
+        XCTAssertNil(manifest.shuffleDisplays)
         XCTAssertNil(manifest.playbackState)
     }
 
@@ -103,12 +104,13 @@ final class SharedFramesTests: XCTestCase {
         let bridge = SaverBridge(
             configuration: SaverConfiguration(
                 columns: 3, rows: 2, tileWidth: 256, tileHeight: 240,
-                lowPowerMode: true),
+                lowPowerMode: true, shuffleDisplays: true),
             heartbeat: listener, manifestURL: url, activityPollInterval: 0.05)
         defer { bridge.shutdown() }
 
         var manifest = try XCTUnwrap(SharedFrames.readManifest(from: url))
         XCTAssertEqual(manifest.heartbeatPort, Int(listener.port))
+        XCTAssertEqual(manifest.shuffleDisplays, true)
         XCTAssertEqual(manifest.playbackState, .idle)
         XCTAssertEqual(manifest.tiles, [])
 
@@ -144,7 +146,7 @@ final class SharedFramesTests: XCTestCase {
         let bridge = SaverBridge(
             configuration: SaverConfiguration(
                 columns: 1, rows: 1, tileWidth: 256, tileHeight: 240,
-                lowPowerMode: false),
+                lowPowerMode: false, shuffleDisplays: false),
             heartbeat: nil, manifestURL: url, activityPollInterval: 1)
         let other = SharedFrames.Manifest(
             pid: getpid() + 1, columns: 1, rows: 1,

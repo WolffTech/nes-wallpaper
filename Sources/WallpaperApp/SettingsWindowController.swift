@@ -19,8 +19,10 @@ final class SettingsModel: ObservableObject {
     @Published var videoFilter = VideoFilter.none
     @Published var showDockIcon = false
     @Published var showDesktopWallpaper = true
+    @Published var shuffleDisplays = false
 
     var onApply: (() -> Void)?
+    var onShuffleDisplaysChanged: (() -> Void)?
 
     func load() {
         let settings = WallpaperSettings.load()
@@ -33,6 +35,17 @@ final class SettingsModel: ObservableObject {
         videoFilter = settings.videoFilter
         showDockIcon = settings.showDockIcon
         showDesktopWallpaper = settings.showDesktopWallpaper
+        shuffleDisplays = settings.shuffleDisplays
+    }
+
+    /// Saved immediately rather than via Apply: only the layout changes,
+    /// so the running grid needs no restart.
+    func setShuffleDisplays(_ enabled: Bool) {
+        shuffleDisplays = enabled
+        var settings = WallpaperSettings.load()
+        settings.shuffleDisplays = enabled
+        settings.save()
+        onShuffleDisplaysChanged?()
     }
 
     func apply() {
@@ -264,8 +277,11 @@ struct SettingsView: View {
                 Picker("Rows", selection: $model.rows) {
                     ForEach(1..<7, id: \.self) { Text("\($0)").tag($0) }
                 }
+                Toggle("Shuffle tiles on each display", isOn: Binding(
+                    get: { model.shuffleDisplays },
+                    set: { model.setShuffleDisplays($0) }))
             } footer: {
-                note(Text("Tiles are laid out in this grid on every display."))
+                note(Text("Every display shows this grid. Shuffle gives extra displays the same games in a different order; it applies immediately."))
             }
             Section {
                 Picker("Video Filter", selection: $model.videoFilter) {
@@ -286,7 +302,7 @@ struct SettingsView: View {
                         .labelsHidden()
                 }
             } footer: {
-                note(Text("Minutes between tile shuffles. 0 means never rotate."))
+                note(Text("Minutes between game rotations. 0 means never rotate."))
             }
             Section {
                 Toggle("Enlarge game to full screen",
@@ -430,6 +446,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         super.init(window: window)
         model.onApply = { [weak menuBar] in menuBar?.settingsApplied() }
+        model.onShuffleDisplaysChanged = { [weak menuBar] in
+            menuBar?.displayLayoutChanged()
+        }
         controls.onChanged = { [weak menuBar] in menuBar?.controlsChanged() }
         controls.onShortcutChanged = { [weak menuBar] shortcut in
             menuBar?.changeTakeoverShortcut(shortcut)
