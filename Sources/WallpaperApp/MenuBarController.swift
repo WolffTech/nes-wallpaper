@@ -20,6 +20,7 @@ struct WallpaperSettings {
     static let showDockIconKey = "ShowDockIcon"
     static let showDesktopWallpaperKey = "ShowDesktopWallpaper"
     static let fullscreenTakeoverKey = "FullscreenTakeover"
+    static let shuffleDisplaysKey = "ShuffleDisplays"
 
     var romsDir: String?
     var moviesDir: String?
@@ -39,6 +40,8 @@ struct WallpaperSettings {
     var takeoverShortcut: GlobalShortcut?
     /// Fill the takeover display with the played tile during live play.
     var fullscreenTakeover: Bool
+    /// Show the same games in a different order on each extra display.
+    var shuffleDisplays: Bool
 
     var rotationInterval: TimeInterval? {
         rotationMinutes > 0 ? TimeInterval(rotationMinutes) * 60 : nil
@@ -73,7 +76,8 @@ struct WallpaperSettings {
             takeoverControls: defaults.dictionary(forKey: takeoverControlsKey)?
                 .compactMapValues { $0 as? Int } ?? [:],
             takeoverShortcut: shortcut,
-            fullscreenTakeover: defaults.bool(forKey: fullscreenTakeoverKey))
+            fullscreenTakeover: defaults.bool(forKey: fullscreenTakeoverKey),
+            shuffleDisplays: defaults.bool(forKey: shuffleDisplaysKey))
     }
 
     func save(defaults: UserDefaults = .standard) {
@@ -91,6 +95,7 @@ struct WallpaperSettings {
         defaults.set(takeoverShortcut?.storedValue ?? [:],
                      forKey: Self.takeoverShortcutKey)
         defaults.set(fullscreenTakeover, forKey: Self.fullscreenTakeoverKey)
+        defaults.set(shuffleDisplays, forKey: Self.shuffleDisplaysKey)
     }
 }
 
@@ -347,6 +352,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         controller?.fullscreenTakeover = settings.fullscreenTakeover
     }
 
+    /// Called by the Display tab's shuffle toggle after it has saved: the
+    /// layout applies live to the wallpaper and, via the manifest, the saver.
+    func displayLayoutChanged() {
+        let settings = WallpaperSettings.load()
+        controller?.shuffleDisplays = settings.shuffleDisplays
+        saverBridge?.updateConfiguration(Self.saverConfiguration(settings))
+    }
+
     /// Suspend registration while the recorder has focus so the old shortcut
     /// reaches the settings window, then restore the persisted assignment.
     func shortcutRecordingChanged(_ recording: Bool) {
@@ -410,7 +423,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             columns: settings.columns, rows: settings.rows,
             tileWidth: settings.videoFilter.outputSize.width,
             tileHeight: settings.videoFilter.outputSize.height,
-            lowPowerMode: settings.lowPowerMode)
+            lowPowerMode: settings.lowPowerMode,
+            shuffleDisplays: settings.shuffleDisplays)
     }
 
     private func reconcilePlayback(interactive: Bool) {
@@ -471,6 +485,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             controller.takeoverKeymap =
                 TakeoverKeymap(buttonAssignments: settings.takeoverControls)
             controller.fullscreenTakeover = settings.fullscreenTakeover
+            controller.shuffleDisplays = settings.shuffleDisplays
             controller.onTakeoverEnded = { [weak self] in self?.refreshMenuTitles() }
             self.controller = controller
         } catch {

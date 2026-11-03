@@ -172,12 +172,20 @@ public final class TileGridRenderer {
         didSet { needsPresent = needsPresent || fullscreenTile != oldValue }
     }
 
+    /// Which tile each grid cell shows. Textures stay keyed by tile, so a
+    /// new layout only changes where tiles are drawn. A layout whose count
+    /// does not match the grid is ignored in favor of the identity order.
+    public var layout: TileLayout {
+        didSet { needsPresent = needsPresent || layout != oldValue }
+    }
+
     public init(context: MetalContext, view: WallpaperMetalView,
          columns: Int, rows: Int, tileWidth: Int, tileHeight: Int) throws {
         self.context = context
         self.metalLayer = view.metalLayer
         self.columns = columns
         self.rows = rows
+        self.layout = .identity(count: columns * rows)
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: tileWidth, height: tileHeight,
@@ -290,10 +298,15 @@ public final class TileGridRenderer {
         } else {
             let cellWidth = drawableWidth / CGFloat(columns)
             let cellHeight = drawableHeight / CGFloat(rows)
-            for (local, index) in range.enumerated() {
-                guard index < tiles.count, lastUploaded[local] != nil else { continue }
-                let col = local % columns
-                let row = local / columns
+            let layout = self.layout.count == textures.count
+                ? self.layout : .identity(count: textures.count)
+            for cell in 0..<textures.count {
+                let local = layout.tile(atCell: cell)
+                let index = range.lowerBound + local
+                guard local < range.count, index < tiles.count,
+                      lastUploaded[local] != nil else { continue }
+                let col = cell % columns
+                let row = cell / columns
                 let cell = CGRect(x: CGFloat(col) * cellWidth,
                                   y: CGFloat(row) * cellHeight,
                                   width: cellWidth, height: cellHeight)

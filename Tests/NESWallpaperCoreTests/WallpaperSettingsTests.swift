@@ -5,6 +5,17 @@ import XCTest
 @testable import nes_wallpaper
 
 final class WallpaperSettingsTests: XCTestCase {
+    func testShuffleDisplaysDefaultsOffAndRoundTrips() {
+        withDefaults { defaults in
+            var settings = WallpaperSettings.load(defaults: defaults)
+            XCTAssertFalse(settings.shuffleDisplays)
+            settings.shuffleDisplays = true
+            settings.save(defaults: defaults)
+
+            XCTAssertTrue(WallpaperSettings.load(defaults: defaults).shuffleDisplays)
+        }
+    }
+
     func testTakeoverShortcutHasDefault() {
         withDefaults { defaults in
             XCTAssertEqual(WallpaperSettings.load(defaults: defaults).takeoverShortcut,

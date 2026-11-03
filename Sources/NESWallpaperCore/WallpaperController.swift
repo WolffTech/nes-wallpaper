@@ -149,6 +149,17 @@ public final class WallpaperController {
         didSet { applyFullscreenState() }
     }
 
+    /// When true, each display beyond the primary shows the same tiles in its
+    /// own shuffled order instead of mirroring the primary. Settable while
+    /// running; only the layout changes, so no helper restarts.
+    public var shuffleDisplays = false {
+        didSet {
+            guard shuffleDisplays != oldValue else { return }
+            applyLayouts(reshuffle: true)
+            writeManifest()
+        }
+    }
+
     /// The active live-play session, at most one. The session tile is
     /// excluded from rotation and pause while the user is playing it.
     private var takeoverSession: TakeoverSession?
@@ -205,7 +216,8 @@ public final class WallpaperController {
             columns: columns, rows: rows,
             tileWidth: filter.outputSize.width,
             tileHeight: filter.outputSize.height,
-            lowPowerMode: lowPowerMode)
+            lowPowerMode: lowPowerMode,
+            shuffleDisplays: shuffleDisplays)
         if let saverBridge {
             self.saverBridge = saverBridge
             self.ownsSaverBridge = false
@@ -381,7 +393,30 @@ public final class WallpaperController {
         for screen in NSScreen.screens {
             try addSlot(for: screen)
         }
+        applyLayouts(reshuffle: true)
         updatePauseState()
+    }
+
+    /// Give each display its tile order. Slots follow NSScreen.screens, so
+    /// slots[0] is the primary display and always keeps the identity order.
+    /// With shuffling on, every other display gets an order that avoids
+    /// putting a tile in the same cell as on another display. Without
+    /// `reshuffle`, displays that already have a shuffled order keep it, so
+    /// plugging in a display does not rearrange the others.
+    private func applyLayouts(reshuffle: Bool) {
+        let identity = TileLayout.identity(count: columns * rows)
+        var layouts: [TileLayout?] = slots.enumerated().map { index, slot in
+            if !shuffleDisplays || index == 0 { return identity }
+            let current = slot.renderer.layout
+            return reshuffle || current == identity ? nil : current
+        }
+        for index in layouts.indices where layouts[index] == nil {
+            layouts[index] = .shuffled(
+                count: identity.count, avoiding: layouts.compactMap { $0 })
+        }
+        for (slot, layout) in zip(slots, layouts) {
+            if let layout { slot.renderer.layout = layout }
+        }
     }
 
     private func configureFrameRate(for link: CADisplayLink) {
@@ -450,6 +485,10 @@ public final class WallpaperController {
               !emulationPaused, !slots.isEmpty else { return }
         let mode = TileSelectionMode(
             windows: slots.map(\.window), columns: columns, rows: rows,
+            tileInCell: { [weak self] window, cell in
+                self?.slots.first { $0.window === window }?
+                    .renderer.layout.tile(atCell: cell)
+            },
             onHover: { [weak self] tile in self?.setEmphasis(.spotlight(tile)) },
             onPick: { [weak self] tile in
                 guard let self else { return }
@@ -540,7 +579,8 @@ public final class WallpaperController {
             columns: columns, rows: rows,
             tileWidth: filter.outputSize.width,
             tileHeight: filter.outputSize.height,
-            lowPowerMode: lowPowerMode))
+            lowPowerMode: lowPowerMode,
+            shuffleDisplays: shuffleDisplays))
         saverBridge.publish(tiles: tiles.map(\.shmName))
     }
 
@@ -678,7 +718,7 @@ public final class WallpaperController {
     }
 
     /// Display-link callback for one window: upload changed tiles, draw.
-    /// Every window draws the whole tile array — displays mirror each other.
+    /// Every window draws the whole tile array, in its own layout's order.
     fileprivate func render(on renderer: TileGridRenderer) {
         renderer.draw(tiles: tiles, range: 0..<tiles.count)
     }
@@ -710,6 +750,7 @@ public final class WallpaperController {
             }
         }
         for slot in departed { removeSlot(slot) }
+        applyLayouts(reshuffle: false)
         // A session whose raised window just left with its display is over.
         if let session = takeoverSession,
            !slots.contains(where: { $0.window === session.window }) {

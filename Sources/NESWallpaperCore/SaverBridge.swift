@@ -10,14 +10,16 @@ public struct SaverConfiguration: Equatable {
     public let tileWidth: Int
     public let tileHeight: Int
     public let lowPowerMode: Bool
+    public let shuffleDisplays: Bool
 
     public init(columns: Int, rows: Int, tileWidth: Int, tileHeight: Int,
-                lowPowerMode: Bool) {
+                lowPowerMode: Bool, shuffleDisplays: Bool) {
         self.columns = columns
         self.rows = rows
         self.tileWidth = tileWidth
         self.tileHeight = tileHeight
         self.lowPowerMode = lowPowerMode
+        self.shuffleDisplays = shuffleDisplays
     }
 }
 
@@ -128,6 +130,7 @@ public final class SaverBridge {
             tileHeight: configuration.tileHeight,
             heartbeatPort: Int(heartbeatPort),
             lowPowerMode: configuration.lowPowerMode,
+            shuffleDisplays: configuration.shuffleDisplays,
             playbackState: playbackState,
             tiles: tiles)
         do {

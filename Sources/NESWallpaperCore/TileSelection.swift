@@ -3,12 +3,13 @@
 
 import AppKit
 
-/// Maps a point in a wallpaper window to the tile whose grid cell contains
-/// it. Points are in AppKit window/view coordinates (origin bottom-left);
-/// tiles are row-major from the top-left, matching TileGridRenderer. The
-/// whole cell counts, including a tile's letterbox margins.
+/// Maps a point in a wallpaper window to the grid cell containing it.
+/// Points are in AppKit window/view coordinates (origin bottom-left); cells
+/// are row-major from the top-left, matching TileGridRenderer. The whole
+/// cell counts, including a tile's letterbox margins. The window's
+/// TileLayout says which tile that cell shows.
 enum TileGridHitTest {
-    static func tileIndex(at point: CGPoint, in size: CGSize,
+    static func cellIndex(at point: CGPoint, in size: CGSize,
                           columns: Int, rows: Int) -> Int? {
         guard size.width > 0, size.height > 0, columns > 0, rows > 0 else { return nil }
         let column = Int(floor(point.x / size.width * CGFloat(columns)))
@@ -34,6 +35,8 @@ final class TileSelectionMode {
     private let windows: [WallpaperWindow]
     private let columns: Int
     private let rows: Int
+    /// The tile a window shows in a cell; layouts differ per display.
+    private let tileInCell: (WallpaperWindow, Int) -> Int?
     private let onHover: (Int?) -> Void
     private let onPick: (Int) -> Void
     private let onCancel: () -> Void
@@ -45,12 +48,14 @@ final class TileSelectionMode {
     private var lastHover: Int??
 
     init(windows: [WallpaperWindow], columns: Int, rows: Int,
+         tileInCell: @escaping (WallpaperWindow, Int) -> Int?,
          onHover: @escaping (Int?) -> Void,
          onPick: @escaping (Int) -> Void,
          onCancel: @escaping () -> Void) {
         self.windows = windows
         self.columns = columns
         self.rows = rows
+        self.tileInCell = tileInCell
         self.onHover = onHover
         self.onPick = onPick
         self.onCancel = onCancel
@@ -125,11 +130,11 @@ final class TileSelectionMode {
     private func updateHover() {
         var tile: Int?
         let mouse = NSEvent.mouseLocation
-        if let window = windowUnder(mouse) {
-            tile = TileGridHitTest.tileIndex(
-                at: CGPoint(x: mouse.x - window.frame.minX,
-                            y: mouse.y - window.frame.minY),
-                in: window.frame.size, columns: columns, rows: rows)
+        if let window = windowUnder(mouse), let cell = TileGridHitTest.cellIndex(
+            at: CGPoint(x: mouse.x - window.frame.minX,
+                        y: mouse.y - window.frame.minY),
+            in: window.frame.size, columns: columns, rows: rows) {
+            tile = tileInCell(window, cell)
         }
         if lastHover != .some(tile) {
             lastHover = .some(tile)
@@ -140,9 +145,10 @@ final class TileSelectionMode {
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
         guard let window = event.window as? WallpaperWindow,
               windows.contains(where: { $0 === window }) else { return event }
-        if let tile = TileGridHitTest.tileIndex(
+        if let cell = TileGridHitTest.cellIndex(
             at: event.locationInWindow, in: window.frame.size,
-            columns: columns, rows: rows) {
+            columns: columns, rows: rows),
+           let tile = tileInCell(window, cell) {
             onPick(tile)
         }
         return nil
