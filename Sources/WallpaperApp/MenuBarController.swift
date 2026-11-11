@@ -120,6 +120,10 @@ struct PlaybackDemand: Equatable {
     var userPaused = false
 
     var needsPlayback: Bool { desktop || saver }
+
+    mutating func applyDesktopSetting(_ showDesktopWallpaper: Bool) {
+        desktop = desktop && showDesktopWallpaper
+    }
 }
 
 /// Owns the status item and the wallpaper lifecycle in menu-bar mode.
@@ -331,11 +335,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     /// Called by the settings window's Apply button after it has saved the
-    /// new values. A running grid restarts so every helper uses them.
+    /// new values. A running grid restarts so every helper uses them; a
+    /// stopped wallpaper stays stopped.
     func settingsApplied() {
         let settings = WallpaperSettings.load()
         NSApp.setActivationPolicy(settings.showDockIcon ? .regular : .accessory)
-        demand.desktop = settings.showDesktopWallpaper
+        demand.applyDesktopSetting(settings.showDesktopWallpaper)
         stopPlayback()
         saverBridge?.updateConfiguration(Self.saverConfiguration(settings))
         reconcilePlayback(interactive: demand.desktop)

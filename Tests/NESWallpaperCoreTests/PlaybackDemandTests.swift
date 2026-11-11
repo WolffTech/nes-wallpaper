@@ -68,6 +68,32 @@ final class PlaybackDemandTests: XCTestCase {
         XCTAssertFalse(demand.userPaused)
     }
 
+    func testApplyingSettingsKeepsStoppedWallpaperStopped() {
+        var demand = PlaybackDemand()
+        demand.desktop = false
+
+        demand.applyDesktopSetting(true)
+
+        XCTAssertFalse(demand.desktop)
+        XCTAssertFalse(demand.needsPlayback)
+    }
+
+    func testApplyingSettingsKeepsRunningWallpaperRunning() {
+        var demand = PlaybackDemand()
+
+        demand.applyDesktopSetting(true)
+
+        XCTAssertTrue(demand.desktop)
+    }
+
+    func testApplyingSettingsCanTurnOffDesktopWallpaper() {
+        var demand = PlaybackDemand()
+
+        demand.applyDesktopSetting(false)
+
+        XCTAssertFalse(demand.desktop)
+    }
+
     func testPauseSurvivesSaverActivityAndReapplyingDesktopSettings() {
         var demand = PlaybackDemand()
         demand.userPaused = true
